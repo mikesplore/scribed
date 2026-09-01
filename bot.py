@@ -123,9 +123,32 @@ async def choose_invoice_source(update: Update, context: ContextTypes.DEFAULT_TY
         "How would you like to start the invoice?",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("From scratch", callback_data="new_invoice_scratch")],
-            [InlineKeyboardButton("Use a Gatekeeper project", callback_data="projects")],
+            [InlineKeyboardButton("Use a Gatekeeper project", callback_data="invoice_projects")],
         ]),
     )
+
+async def invoice_project_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not owner_only(update): return
+    query = update.callback_query
+    await query.answer()
+    missing = [key for key in ("GATEKEEPER_BASE_URL", "GATEKEEPER_EMAIL", "GATEKEEPER_PASSWORD") if not os.getenv(key)]
+    if missing:
+        await query.message.reply_text(f"Gatekeeper is not configured. Missing: {', '.join(missing)}")
+        return
+    try:
+        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as api:
+            base = os.environ["GATEKEEPER_BASE_URL"].rstrip("/")
+            login = await api.post(base + "/api/auth/login", json={"email": os.environ["GATEKEEPER_EMAIL"], "password": os.environ["GATEKEEPER_PASSWORD"]})
+            if not login.is_success:
+                await query.message.reply_text(f"Gatekeeper login failed: {api_error(login)}"); return
+            response = await api.get(base + "/api/admin/projects", headers={"Authorization": f"Bearer {login.json()['token']}"})
+    except httpx.RequestError:
+        await query.message.reply_text("I couldn't reach Gatekeeper. Please try again shortly."); return
+    if not response.is_success:
+        await query.message.reply_text(f"Could not load Gatekeeper projects: {api_error(response)}"); return
+    items = response.json()
+    keyboard = [[InlineKeyboardButton(f"{x.get('name', x.get('slug', 'Project'))}", callback_data=f"project_document:invoice:{x['slug']}")] for x in items]
+    await query.message.reply_text("Choose a project for the invoice:", reply_markup=InlineKeyboardMarkup(keyboard or [[InlineKeyboardButton("No projects found", callback_data="noop")]]))
 
 async def begin_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not owner_only(update): return ConversationHandler.END
@@ -153,6 +176,17 @@ async def begin_project_document(update: Update, context: ContextTypes.DEFAULT_T
     kind = query.data.split(":", 2)[1]
     project = context.user_data.get("gatekeeper_project", {})
     if not project:
+        slug = query.data.split(":", 2)[2]
+        base = os.environ.get("GATEKEEPER_BASE_URL", "").rstrip("/")
+        try:
+            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as api:
+                login = await api.post(base + "/api/auth/login", json={"email": os.environ["GATEKEEPER_EMAIL"], "password": os.environ["GATEKEEPER_PASSWORD"]})
+                response = await api.get(base + f"/api/admin/projects/{slug}", headers={"Authorization": f"Bearer {login.json()['token']}"})
+            if response.is_success:
+                body = response.json(); project = body.get("project", body)
+        except (httpx.RequestError, KeyError, ValueError):
+            project = {}
+    if not project:
         await query.message.reply_text("That project preview has expired. Open the project again and try once more.")
         return ConversationHandler.END
     context.user_data.clear()
@@ -167,7 +201,9 @@ async def begin_project_document(update: Update, context: ContextTypes.DEFAULT_T
     context.user_data.update({key: value for key, value in values.items() if value not in (None, "")})
     fields = context.user_data["fields"]
     missing = [field for field in fields if not context.user_data.get(field)]
-    context.user_data["index"] = fields.index(missing[0]) if missing else 0
+    context.user_data["all_fields"] = fields
+    context.user_data["fields"] = missing
+    context.user_data["index"] = 0
     if not missing:
         await query.message.reply_text(
             "I filled this from Gatekeeper. Ready to create it?",
@@ -218,7 +254,8 @@ async def confirm_conversation(update: Update, context: ContextTypes.DEFAULT_TYP
         target = update.message
     if action != "create_confirm" and action != "confirm":
         await target.reply_text("Cancelled. Nothing was created."); return ConversationHandler.END
-    data = {field: context.user_data[field] for field in context.user_data["fields"] if field in context.user_data}
+    all_fields = context.user_data.get("all_fields", context.user_data["fields"])
+    data = {field: context.user_data[field] for field in all_fields if field in context.user_data}
     if context.user_data.get("gatekeeper_project_id"):
         data["gatekeeper_project_id"] = context.user_data["gatekeeper_project_id"]
     context.user_data["idempotency_key"] = context.user_data.get("idempotency_key", str(uuid4()))
@@ -536,6 +573,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(delete_menu, pattern="^delete_menu$"))
     app.add_handler(CallbackQueryHandler(choose_invoice_source, pattern="^choose_invoice$"))
+    app.add_handler(CallbackQueryHandler(invoice_project_menu, pattern="^invoice_projects$"))
     app.add_handler(CallbackQueryHandler(delete_contract_menu, pattern="^delete_contracts$"))
     app.add_handler(CallbackQueryHandler(delete_project_menu, pattern="^delete_projects$"))
     app.add_handler(CallbackQueryHandler(project_details, pattern="^projects:|^project:"))
