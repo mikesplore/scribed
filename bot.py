@@ -517,20 +517,22 @@ async def document_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await update.message.reply_text(response.text[:3900] if response.is_success else f"Could not find document: {api_error(response)}")
 
 async def duplicate_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    target = update.effective_message
     if not owner_only(update) or len(context.args) != 1 or not valid_number(context.args[0]):
-        await update.message.reply_text("Usage: /duplicate MK-CON-0001")
+        if target:
+            await target.reply_text("Usage: /duplicate MK-CON-0001")
         return
     number = context.args[0]
     async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS, timeout=HTTP_TIMEOUT) as api:
         info = await api.get(f"/documents/{number}")
         if not info.is_success:
-            await update.message.reply_text(f"Could not find document: {api_error(info)}"); return
+            await target.reply_text(f"Could not find document: {api_error(info)}"); return
         data = info.json()
         response = await api.post(f"/{data['type']}s/{data['id']}/duplicate")
     if response.is_success:
-        await update.message.reply_document(InputFile(response.content, filename=f"{number}-copy.pdf"))
+        await target.reply_document(InputFile(response.content, filename=f"{number}-copy.pdf"))
     else:
-        await update.message.reply_text(f"Could not duplicate document: {api_error(response)}")
+        await target.reply_text(f"Could not duplicate document: {api_error(response)}")
 
 async def client_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     target = update.effective_message
