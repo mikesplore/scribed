@@ -37,3 +37,4 @@ class InvoiceRequest(BaseModel):
     due_date: date | None = None
     invoice_number: DocumentNumber = Field(default="DRAFT-INVOICE")
     payment_instructions: str = "Payment details will be shared by email."
+    gatekeeper_project_id: str | None = None

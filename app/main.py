@@ -126,8 +126,9 @@ def create_invoice(request: InvoiceRequest, db: Session = Depends(get_db), idemp
     request_data["invoice_number"] = number
     pdf = render_pdf("invoice.html", request_data)
     location = f"invoices/{number}.pdf"
-    document = Invoice(invoice_number=number, client_name=request.client_name, amount=request.amount,
-                       client_email=request.client_email, currency=request.currency, pdf_path=location,
+    document = Invoice(invoice_number=number, client_name=request.client_name, project_name=request.project_name, amount=request.amount,
+                       client_email=request.client_email, gatekeeper_project_id=request.gatekeeper_project_id,
+                       currency=request.currency, terms_json=json.dumps(request_data, default=str), pdf_path=location,
                        pdf_hash=hashlib.sha256(pdf).hexdigest(), idempotency_key=idempotency_key,
                        request_fingerprint=fingerprint(request.model_dump()))
     db.add(document)
@@ -137,6 +138,26 @@ def create_invoice(request: InvoiceRequest, db: Session = Depends(get_db), idemp
     db.commit()
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f'inline; filename="{number}.pdf"'})
+
+
+@app.post("/contracts/{document_id}/duplicate", response_class=Response)
+def duplicate_contract(document_id: int, db: Session = Depends(get_db)) -> Response:
+    source = db.get(Contract, document_id)
+    if not source: raise HTTPException(status_code=404, detail="Contract not found")
+    data = json.loads(source.terms_json)
+    data.pop("contract_number", None)
+    data["gatekeeper_project_id"] = source.gatekeeper_project_id
+    return create_contract(ContractRequest(**data), db)
+
+
+@app.post("/invoices/{document_id}/duplicate", response_class=Response)
+def duplicate_invoice(document_id: int, db: Session = Depends(get_db)) -> Response:
+    source = db.get(Invoice, document_id)
+    if not source: raise HTTPException(status_code=404, detail="Invoice not found")
+    data = json.loads(source.terms_json)
+    data.pop("invoice_number", None)
+    data["gatekeeper_project_id"] = source.gatekeeper_project_id
+    return create_invoice(InvoiceRequest(**data), db)
 
 
 def _file_response(path: str, filename: str) -> Response:
@@ -175,6 +196,9 @@ def get_document_status(number: str, db: Session = Depends(get_db)) -> dict:
     if invoice:
         return {"type": "invoice", "id": invoice.id, "number": number,
                 "client_name": invoice.client_name, "status": invoice.status,
+                "project_name": invoice.project_name,
+                "amount": str(invoice.amount), "currency": invoice.currency,
+                "gatekeeper_project_id": invoice.gatekeeper_project_id,
                 "created_at": invoice.created_at}
     raise HTTPException(status_code=404, detail="Document not found")
 
@@ -208,7 +232,9 @@ def permanently_delete_contract(document_id: int, db: Session = Depends(get_db))
 @app.get("/invoices")
 def list_invoices(db: Session = Depends(get_db)) -> list[dict]:
     return [{"id": item.id, "number": item.invoice_number, "client_name": item.client_name,
-             "status": item.status, "created_at": item.created_at}
+             "project_name": item.project_name,
+             "status": item.status, "amount": str(item.amount), "currency": item.currency,
+             "gatekeeper_project_id": item.gatekeeper_project_id, "created_at": item.created_at}
             for item in db.query(Invoice).filter_by(archived_at=None).order_by(Invoice.created_at.desc()).all()]
 
 
@@ -217,6 +243,17 @@ def document_audit(number: str, db: Session = Depends(get_db)) -> list[dict]:
     return [{"action": item.action, "type": item.document_type, "number": item.document_number,
              "detail": item.detail, "created_at": item.created_at}
             for item in db.query(AuditLog).filter_by(document_number=number).order_by(AuditLog.created_at.asc()).all()]
+
+
+@app.get("/clients/{client_name}")
+def client_history(client_name: str, db: Session = Depends(get_db)) -> dict:
+    contracts = db.query(Contract).filter(Contract.client_name.ilike(client_name), Contract.archived_at.is_(None)).all()
+    invoices = db.query(Invoice).filter(Invoice.client_name.ilike(client_name), Invoice.archived_at.is_(None)).all()
+    billed = sum((item.amount for item in invoices), 0)
+    paid = sum((item.amount for item in invoices if item.status == "paid"), 0)
+    return {"client_name": client_name, "contracts": [{"id": x.id, "number": x.contract_number, "project_name": x.project_name, "status": x.status} for x in contracts],
+            "invoices": [{"id": x.id, "number": x.invoice_number, "project_name": x.project_name, "amount": str(x.amount), "currency": x.currency, "status": x.status} for x in invoices],
+            "totals": {"billed": str(billed), "paid": str(paid), "balance": str(billed - paid)}}
 
 
 @app.get("/contracts/by-project/{gatekeeper_project_id}")

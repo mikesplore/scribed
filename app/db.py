@@ -25,7 +25,7 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     if engine.dialect.name == "sqlite":
         additions = {"contracts": [("accepted_at", "DATETIME"), ("pdf_hash", "VARCHAR(64)"), ("gatekeeper_project_id", "VARCHAR(64)"), ("archived_at", "DATETIME"), ("idempotency_key", "VARCHAR(128)"), ("request_fingerprint", "VARCHAR(64)")],
-                     "invoices": [("client_email", "VARCHAR(255)"), ("paid_at", "DATETIME"), ("pdf_hash", "VARCHAR(64)"), ("archived_at", "DATETIME"), ("idempotency_key", "VARCHAR(128)"), ("request_fingerprint", "VARCHAR(64)")]}
+                     "invoices": [("project_name", "VARCHAR(255)"), ("client_email", "VARCHAR(255)"), ("gatekeeper_project_id", "VARCHAR(64)"), ("terms_json", "TEXT"), ("paid_at", "DATETIME"), ("pdf_hash", "VARCHAR(64)"), ("archived_at", "DATETIME"), ("idempotency_key", "VARCHAR(128)"), ("request_fingerprint", "VARCHAR(64)")]}
         with engine.begin() as connection:
             for table, columns in additions.items():
                 existing = {column["name"] for column in inspect(engine).get_columns(table)}

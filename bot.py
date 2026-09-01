@@ -2,6 +2,7 @@
 import os
 import logging
 import re
+from urllib.parse import quote
 import httpx
 from decimal import Decimal, InvalidOperation
 from uuid import uuid4
@@ -48,6 +49,22 @@ def valid_amount(value: str) -> bool:
 def valid_number(value: str) -> bool:
     return bool(__import__("re").fullmatch(r"MK-(?:CON|INV)-\d{4,}", value.strip(), __import__("re").IGNORECASE))
 
+def payment_summary(project: dict, payments: list[dict]) -> tuple[Decimal | None, Decimal | None]:
+    """Return paid and outstanding amounts from Gatekeeper's project payload."""
+    total_due = project.get("amountDue") or project.get("amount_due")
+    try:
+        due = Decimal(str(total_due)) if total_due is not None else None
+    except (InvalidOperation, ValueError):
+        due = None
+    paid = Decimal("0")
+    for payment in payments:
+        if str(payment.get("status", "")).lower() in {"paid", "success", "successful", "completed"}:
+            try:
+                paid += Decimal(str(payment.get("amount", 0)))
+            except (InvalidOperation, ValueError):
+                continue
+    return paid, (due - paid if due is not None else None)
+
 def api_error(response: httpx.Response) -> str:
     status = f"HTTP {response.status_code}"
     try:
@@ -80,6 +97,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/send NUMBER — send a document by email\n"
         "/accepted NUMBER — mark a contract accepted\n"
         "/paid NUMBER — mark an invoice paid\n\n"
+        "/duplicate NUMBER — create a new draft from a document\n"
+        "/client NAME — view a client's document and payment history\n\n"
         "Gatekeeper project selection and archiving are under /start → Delete document.\n\n"
         "/cancel — cancel a workflow\n"
         "/help — show this help"
@@ -107,6 +126,38 @@ async def begin_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await target.reply_text(f"Creating a {kind}. Type /cancel at any time.\n\n{FIELD_PROMPTS[context.user_data['fields'][0]]}")
     return 0
 
+async def begin_project_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Start a document using the project currently shown in the bot."""
+    if not owner_only(update): return ConversationHandler.END
+    query = update.callback_query
+    await query.answer()
+    kind = query.data.split(":", 2)[1]
+    project = context.user_data.get("gatekeeper_project", {})
+    if not project:
+        await query.message.reply_text("That project preview has expired. Open the project again and try once more.")
+        return ConversationHandler.END
+    context.user_data.clear()
+    context.user_data.update({"kind": kind, "fields": INVOICE_FIELDS if kind == "invoice" else CONTRACT_FIELDS, "index": 0})
+    values = {
+        "client_name": project.get("clientName") or project.get("client_name"),
+        "project_name": project.get("name") or project.get("projectName") or project.get("project_name"),
+        "amount": project.get("amountDue") or project.get("amount_due"),
+    }
+    if kind == "contract":
+        values["gatekeeper_project_id"] = project.get("id") or project.get("slug")
+    context.user_data.update({key: value for key, value in values.items() if value not in (None, "")})
+    fields = context.user_data["fields"]
+    missing = [field for field in fields if not context.user_data.get(field)]
+    context.user_data["index"] = fields.index(missing[0]) if missing else 0
+    if not missing:
+        await query.message.reply_text("I filled this from Gatekeeper. Reply `confirm` to create it, or `/cancel` to stop.")
+        return 1
+    await query.message.reply_text(
+        f"Starting a {kind} for {values.get('client_name', 'this project')}. "
+        f"I filled in what Gatekeeper knows.\n\n{FIELD_PROMPTS[missing[0]]}"
+    )
+    return 0
+
 async def collect_field(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     fields = context.user_data["fields"]; index = context.user_data["index"]
     if fields[index] == "amount" and not valid_amount(update.message.text):
@@ -122,7 +173,9 @@ async def collect_field(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 async def confirm_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text.lower() != "confirm":
         await update.message.reply_text("Cancelled. Use /start to begin again."); return ConversationHandler.END
-    data = {field: context.user_data[field] for field in context.user_data["fields"]}
+    data = {field: context.user_data[field] for field in context.user_data["fields"] if field in context.user_data}
+    if context.user_data.get("gatekeeper_project_id"):
+        data["gatekeeper_project_id"] = context.user_data["gatekeeper_project_id"]
     context.user_data["idempotency_key"] = context.user_data.get("idempotency_key", str(uuid4()))
     if context.user_data["kind"] == "invoice":
         data["description"] = data["description"]
@@ -178,13 +231,18 @@ async def delete_project_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
     if missing:
         await target.reply_text(f"Gatekeeper is not configured. Missing: {', '.join(missing)}")
         return
-    async with httpx.AsyncClient() as api:
-        login = await api.post(os.environ["GATEKEEPER_BASE_URL"].rstrip("/") + "/api/auth/login", json={"email": os.environ["GATEKEEPER_EMAIL"], "password": os.environ["GATEKEEPER_PASSWORD"]})
-        if not login.is_success:
-            await target.reply_text(f"Gatekeeper login failed: {api_error(login)}")
-            return
-        token = login.json()["token"]
-        response = await api.get(os.environ["GATEKEEPER_BASE_URL"].rstrip("/") + "/api/admin/projects", headers={"Authorization": f"Bearer {token}"})
+    try:
+        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as api:
+            login = await api.post(os.environ["GATEKEEPER_BASE_URL"].rstrip("/") + "/api/auth/login", json={"email": os.environ["GATEKEEPER_EMAIL"], "password": os.environ["GATEKEEPER_PASSWORD"]})
+            if not login.is_success:
+                await target.reply_text(f"Gatekeeper login failed: {api_error(login)}")
+                return
+            token = login.json()["token"]
+            response = await api.get(os.environ["GATEKEEPER_BASE_URL"].rstrip("/") + "/api/admin/projects", headers={"Authorization": f"Bearer {token}"})
+    except httpx.RequestError:
+        logger.exception("Gatekeeper request failed")
+        await target.reply_text("I couldn't reach Gatekeeper. Check its URL, DNS, and network access from the bot container.")
+        return
     if not response.is_success:
         await target.reply_text(f"Could not load Gatekeeper projects: {api_error(response)}")
         return
@@ -215,14 +273,20 @@ async def project_details(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not response.is_success:
         await target.reply_text(f"Could not load project: {api_error(response)}"); return
     body = response.json(); project = body.get("project", body)
+    context.user_data["gatekeeper_project"] = project
     payments = body.get("payments", [])
+    paid, balance = payment_summary(project, payments)
+    currency = project.get("currency", "")
     text = (f"Project: {project.get('name', slug)}\nSlug: {project.get('slug', slug)}\n"
             f"Status: {project.get('status', 'unknown')}\nDomain: {project.get('domain', '—')}\n"
-            f"Client: {project.get('clientName', '—')}\nAmount due: {project.get('amountDue', '—')} {project.get('currency', '')}\n"
+            f"Client: {project.get('clientName', '—')}\nAmount due: {project.get('amountDue', '—')} {currency}\n"
+            f"Paid: {paid if paid is not None else '—'} {currency}\n"
+            f"Balance: {balance if balance is not None else '—'} {currency}\n"
             f"Due date: {project.get('dueDate', '—')}\n\nPayments: {len(payments)}")
     if payments:
         text += "\n" + "\n".join(f"• {p.get('status', 'unknown')} — {p.get('amount', '—')} {project.get('currency', '')} — {p.get('paidAt', p.get('createdAt', '—'))}" for p in payments[:20])
-    keyboard = []
+    keyboard = [[InlineKeyboardButton("Create contract", callback_data=f"project_document:contract:{slug}"),
+                 InlineKeyboardButton("Create invoice", callback_data=f"project_document:invoice:{slug}")]]
     await target.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def project_payments(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -316,6 +380,37 @@ async def document_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         response = await api.get(f"/documents/{context.args[0]}")
     await update.message.reply_text(response.text[:3900] if response.is_success else f"Could not find document: {api_error(response)}")
 
+async def duplicate_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not owner_only(update) or len(context.args) != 1 or not valid_number(context.args[0]):
+        await update.message.reply_text("Usage: /duplicate MK-CON-0001")
+        return
+    number = context.args[0]
+    async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS, timeout=HTTP_TIMEOUT) as api:
+        info = await api.get(f"/documents/{number}")
+        if not info.is_success:
+            await update.message.reply_text(f"Could not find document: {api_error(info)}"); return
+        data = info.json()
+        response = await api.post(f"/{data['type']}s/{data['id']}/duplicate")
+    if response.is_success:
+        await update.message.reply_document(InputFile(response.content, filename=f"{number}-copy.pdf"))
+    else:
+        await update.message.reply_text(f"Could not duplicate document: {api_error(response)}")
+
+async def client_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not owner_only(update) or not context.args:
+        await update.message.reply_text("Usage: /client CLIENT NAME")
+        return
+    name = " ".join(context.args)
+    async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS, timeout=HTTP_TIMEOUT) as api:
+        response = await api.get(f"/clients/{quote(name, safe='')}")
+    if not response.is_success:
+        await update.message.reply_text(f"Could not load client history: {api_error(response)}"); return
+    body = response.json(); totals = body["totals"]
+    lines = [f"Client: {body['client_name']}", f"Billed: {totals['billed']}", f"Paid: {totals['paid']}", f"Balance: {totals['balance']}", ""]
+    lines += [f"{x['number']} — {x['project_name']} — {x['status']}" for x in body["contracts"]]
+    lines += [f"{x['number']} — {x['project_name']} — {x['amount']} {x['currency']} — {x['status']}" for x in body["invoices"]]
+    await update.message.reply_text("\n".join(lines)[:3900])
+
 async def my_documents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not owner_only(update): return
     await list_documents(update, context)
@@ -367,6 +462,7 @@ def build_application() -> Application:
     app.add_handler(CallbackQueryHandler(delete_contract_menu, pattern="^delete_contracts$"))
     app.add_handler(CallbackQueryHandler(delete_project_menu, pattern="^delete_projects$"))
     app.add_handler(CallbackQueryHandler(project_details, pattern="^projects:|^project:"))
+    app.add_handler(CallbackQueryHandler(begin_project_document, pattern="^project_document:(invoice|contract):"))
     app.add_handler(CallbackQueryHandler(project_payments, pattern="^payments:"))
     app.add_handler(CallbackQueryHandler(delete_project_menu, pattern="^projects$"))
     app.add_handler(CallbackQueryHandler(confirm_delete_contract, pattern="^delete_contract:"))
@@ -379,6 +475,8 @@ def build_application() -> Application:
     app.add_handler(MessageHandler(~filters.TEXT, unsupported_input))
     app.add_handler(CommandHandler("status", status))
     app.add_handler(CommandHandler("document", document_lookup))
+    app.add_handler(CommandHandler("duplicate", duplicate_document))
+    app.add_handler(CommandHandler("client", client_history))
     app.add_handler(CommandHandler("my_documents", my_documents))
     app.add_handler(CommandHandler("contracts", list_documents))
     app.add_handler(CommandHandler("invoices", list_documents))
