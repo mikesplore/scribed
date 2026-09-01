@@ -23,7 +23,8 @@ FIELD_PROMPTS = {"client_name": "What is the client name?", "project_name": "Wha
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not owner_only(update): return
     keyboard = [[InlineKeyboardButton("Create contract", callback_data="new_contract"), InlineKeyboardButton("Create invoice", callback_data="new_invoice")],
-                [InlineKeyboardButton("List contracts", callback_data="list_contracts"), InlineKeyboardButton("List invoices", callback_data="list_invoices")]]
+                [InlineKeyboardButton("List contracts", callback_data="list_contracts"), InlineKeyboardButton("List invoices", callback_data="list_invoices")],
+                [InlineKeyboardButton("Delete document", callback_data="delete_menu")]]
     await update.message.reply_text("Welcome to Scribed 👋\n\nWhat would you like to do?", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def begin_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -62,6 +63,64 @@ async def confirm_conversation(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear(); await update.message.reply_text("Cancelled. Use /start when you are ready."); return ConversationHandler.END
+
+async def delete_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not owner_only(update): return
+    await update.callback_query.answer()
+    await update.callback_query.message.reply_text("What would you like to delete?", reply_markup=InlineKeyboardMarkup([
+        [InlineKeyboardButton("Contract", callback_data="delete_contracts")],
+        [InlineKeyboardButton("Gatekeeper project", callback_data="delete_projects")],
+    ]))
+
+async def delete_contract_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not owner_only(update): return
+    await update.callback_query.answer()
+    async with httpx.AsyncClient(base_url=API_URL) as api: response = await api.get("/contracts")
+    items = response.json() if response.is_success else []
+    keyboard = [[InlineKeyboardButton(f"{x['number']} — {x['client_name']}", callback_data=f"delete_contract:{x['id']}")] for x in items]
+    await update.callback_query.message.reply_text("Select a contract:", reply_markup=InlineKeyboardMarkup(keyboard or [[InlineKeyboardButton("No contracts found", callback_data="noop")]]))
+
+async def delete_project_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not owner_only(update): return
+    await update.callback_query.answer()
+    async with httpx.AsyncClient() as api:
+        login = await api.post(os.environ["GATEKEEPER_BASE_URL"].rstrip("/") + "/api/auth/login", json={"email": os.environ["GATEKEEPER_EMAIL"], "password": os.environ["GATEKEEPER_PASSWORD"]})
+        token = login.json()["token"]
+        response = await api.get(os.environ["GATEKEEPER_BASE_URL"].rstrip("/") + "/api/admin/projects", headers={"Authorization": f"Bearer {token}"})
+    items = response.json() if response.is_success else []
+    keyboard = [[InlineKeyboardButton(f"{x['slug']} — {x['name']}", callback_data=f"delete_project:{x['slug']}")] for x in items]
+    await update.callback_query.message.reply_text("Select a Gatekeeper project to archive:", reply_markup=InlineKeyboardMarkup(keyboard or [[InlineKeyboardButton("No projects found", callback_data="noop")]]))
+
+async def confirm_delete_project(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not owner_only(update): return
+    await update.callback_query.answer(); slug = update.callback_query.data.split(":", 1)[1]
+    context.user_data["delete_project_slug"] = slug
+    await update.callback_query.message.reply_text(f"Archive Gatekeeper project `{slug}`? Reply `confirm` or `cancel`.", parse_mode="Markdown")
+
+async def perform_delete_project(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not owner_only(update) or "delete_project_slug" not in context.user_data: return
+    slug = context.user_data.pop("delete_project_slug")
+    if update.message.text.lower() != "confirm": await update.message.reply_text("Archiving cancelled."); return
+    async with httpx.AsyncClient() as api:
+        base = os.environ["GATEKEEPER_BASE_URL"].rstrip("/")
+        login = await api.post(base + "/api/auth/login", json={"email": os.environ["GATEKEEPER_EMAIL"], "password": os.environ["GATEKEEPER_PASSWORD"]})
+        token = login.json()["token"]
+        response = await api.delete(f"{base}/api/admin/projects/{slug}", headers={"Authorization": f"Bearer {token}"})
+    await update.message.reply_text("Project archived." if response.is_success else f"Could not archive: {response.text}")
+
+async def confirm_delete_contract(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not owner_only(update): return
+    await update.callback_query.answer()
+    document_id = update.callback_query.data.split(":", 1)[1]
+    await update.callback_query.message.reply_text("Delete this contract permanently? Reply `confirm` or `cancel`.")
+    context.user_data["delete_contract_id"] = document_id
+
+async def perform_delete_contract(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not owner_only(update) or "delete_contract_id" not in context.user_data: return
+    if update.message.text.lower() != "confirm":
+        context.user_data.pop("delete_contract_id", None); await update.message.reply_text("Deletion cancelled."); return
+    async with httpx.AsyncClient(base_url=API_URL) as api: response = await api.delete(f"/contracts/{context.user_data.pop('delete_contract_id')}")
+    await update.message.reply_text(response.text if response.is_success else f"Could not delete: {response.text}")
 
 async def new_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not owner_only(update): return
@@ -132,6 +191,13 @@ def build_application() -> Application:
         fallbacks=[CommandHandler("cancel", cancel)],
     )
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(delete_menu, pattern="^delete_menu$"))
+    app.add_handler(CallbackQueryHandler(delete_contract_menu, pattern="^delete_contracts$"))
+    app.add_handler(CallbackQueryHandler(delete_project_menu, pattern="^delete_projects$"))
+    app.add_handler(CallbackQueryHandler(confirm_delete_contract, pattern="^delete_contract:"))
+    app.add_handler(CallbackQueryHandler(confirm_delete_project, pattern="^delete_project:"))
+    app.add_handler(MessageHandler(filters.Regex("(?i)^(confirm|cancel)$"), perform_delete_contract))
+    app.add_handler(MessageHandler(filters.Regex("(?i)^(confirm|cancel)$"), perform_delete_project))
     app.add_handler(conversation)
     app.add_handler(CommandHandler("newinvoice", new_invoice))
     app.add_handler(CommandHandler("newcontract", new_contract))

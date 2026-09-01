@@ -124,6 +124,17 @@ def list_contracts(db: Session = Depends(get_db)) -> list[dict]:
             for item in db.query(Contract).order_by(Contract.created_at.desc()).all()]
 
 
+@app.delete("/contracts/{document_id}")
+def delete_contract(document_id: int, db: Session = Depends(get_db)) -> dict:
+    document = db.get(Contract, document_id)
+    if not document: raise HTTPException(status_code=404, detail="Contract not found")
+    path = Path(document.pdf_path)
+    if path.is_file(): path.unlink()
+    number = document.contract_number
+    db.delete(document); db.commit()
+    return {"deleted": True, "number": number}
+
+
 @app.get("/invoices")
 def list_invoices(db: Session = Depends(get_db)) -> list[dict]:
     return [{"id": item.id, "number": item.invoice_number, "client_name": item.client_name,
