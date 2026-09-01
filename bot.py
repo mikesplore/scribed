@@ -563,7 +563,8 @@ def build_application() -> Application:
     conversation = ConversationHandler(
         entry_points=[CommandHandler("newinvoice", begin_conversation), CommandHandler("newcontract", begin_conversation),
                       CallbackQueryHandler(begin_conversation, pattern="^new_(invoice|contract)$"),
-                      CallbackQueryHandler(begin_invoice_scratch, pattern="^new_invoice_scratch$")],
+                      CallbackQueryHandler(begin_invoice_scratch, pattern="^new_invoice_scratch$"),
+                      CallbackQueryHandler(begin_project_document, pattern="^project_document:(invoice|contract):")],
         states={0: [MessageHandler(filters.TEXT & ~filters.COMMAND, collect_field)],
                 1: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_conversation),
                     CallbackQueryHandler(confirm_conversation, pattern="^create_(confirm|edit|cancel)$")]},
@@ -577,7 +578,6 @@ def build_application() -> Application:
     app.add_handler(CallbackQueryHandler(delete_contract_menu, pattern="^delete_contracts$"))
     app.add_handler(CallbackQueryHandler(delete_project_menu, pattern="^delete_projects$"))
     app.add_handler(CallbackQueryHandler(project_details, pattern="^projects:|^project:"))
-    app.add_handler(CallbackQueryHandler(begin_project_document, pattern="^project_document:(invoice|contract):"))
     app.add_handler(CallbackQueryHandler(project_payments, pattern="^payments:"))
     app.add_handler(CallbackQueryHandler(delete_project_menu, pattern="^projects$"))
     app.add_handler(CallbackQueryHandler(confirm_delete_contract, pattern="^delete_contract:"))
