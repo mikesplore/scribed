@@ -1,0 +1,24 @@
+# Scribed
+
+Scribed generates mikesplore contract and invoice PDFs, stores them locally, and exposes them through a FastAPI API.
+
+## First local test
+
+```bash
+cp .env.example .env
+.venv/bin/uvicorn app.main:app --reload
+```
+
+Then open `http://localhost:8000/docs` and use `POST /contracts` or `POST /invoices`. The default SQLite database and `storage/` directory are created automatically.
+
+For the Telegram bot, set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_OWNER_ID` in `.env`, then run:
+
+```bash
+.venv/bin/python bot.py
+```
+
+Run automated checks with:
+
+```bash
+.venv/bin/pytest -q
+```
