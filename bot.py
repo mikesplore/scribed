@@ -249,6 +249,7 @@ async def begin_project_document(update: Update, context: ContextTypes.DEFAULT_T
     if kind == "invoice" and balance is not None:
         values["amount_paid"] = str(paid) if paid else None
         values["original_amount"] = str(balance + paid) if paid else str(balance)
+        values["payments"] = payments
     if kind == "contract":
         values["gatekeeper_project_id"] = project.get("id") or project.get("slug")
     context.user_data.update({key: value for key, value in values.items() if value not in (None, "")})
@@ -312,6 +313,8 @@ async def confirm_conversation(update: Update, context: ContextTypes.DEFAULT_TYP
     for field in ("original_amount", "amount_paid"):
         if field in context.user_data:
             data[field] = context.user_data[field]
+    if "payments" in context.user_data:
+        data["payments"] = context.user_data["payments"]
     if context.user_data.get("gatekeeper_project_id"):
         data["gatekeeper_project_id"] = context.user_data["gatekeeper_project_id"]
     context.user_data["idempotency_key"] = context.user_data.get("idempotency_key", str(uuid4()))

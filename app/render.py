@@ -1,4 +1,5 @@
 from pathlib import Path
+from markupsafe import escape
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoescape
@@ -26,5 +27,21 @@ def render_pdf(template_name: str, fields: dict[str, Any]) -> bytes:
     render_fields.setdefault("due_date", None)
     render_fields.setdefault("payment_instructions", None)
     render_fields.setdefault("client_email", None)
+    render_fields.setdefault("payments", [])
     html = template.render(**render_fields)
+    payments = render_fields.get("payments") or []
+    if payments:
+        rows = []
+        for payment in payments:
+            status = str(payment.get("status", "")).lower()
+            if status not in {"paid", "success", "successful", "completed"}:
+                continue
+            rows.append(
+                "<tr class=\"paid-row\"><td>Payment — "
+                f"{escape(payment.get('paidAt', payment.get('createdAt', '')))}</td>"
+                f"<td class=\"amount-col\">{escape(render_fields.get('currency', ''))} "
+                f"{escape(payment.get('amount', '0'))}</td></tr>"
+            )
+        if rows:
+            html = html.replace("</tbody></table>", "".join(rows) + "</tbody></table>")
     return HTML(string=html, base_url=str(TEMPLATE_DIR)).write_pdf()

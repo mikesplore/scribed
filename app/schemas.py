@@ -40,3 +40,4 @@ class InvoiceRequest(BaseModel):
     gatekeeper_project_id: str | None = None
     original_amount: Decimal | None = Field(default=None, gt=0)
     amount_paid: Decimal | None = Field(default=None, ge=0)
+    payments: list[dict] = Field(default_factory=list)
