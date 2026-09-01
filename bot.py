@@ -403,9 +403,9 @@ async def project_details(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not response.is_success:
         await target.reply_text(f"Could not load project: {api_error(response)}"); return
     body = response.json(); project = body.get("project", body)
+    payments = body.get("payments", [])
     context.user_data["gatekeeper_project"] = project
     context.user_data["gatekeeper_payments"] = payments
-    payments = body.get("payments", [])
     paid, balance = payment_summary(project, payments)
     currency = project.get("currency", "")
     text = (f"Project: {project.get('name', slug)}\nSlug: {project.get('slug', slug)}\n"
