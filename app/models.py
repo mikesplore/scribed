@@ -16,6 +16,7 @@ class Contract(Base):
     status: Mapped[str] = mapped_column(String(20), default="draft")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     pdf_path: Mapped[str] = mapped_column(Text)
+    pdf_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
@@ -36,4 +37,5 @@ class Invoice(Base):
     status: Mapped[str] = mapped_column(String(20), default="draft")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     pdf_path: Mapped[str] = mapped_column(Text)
+    pdf_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

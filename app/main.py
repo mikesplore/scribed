@@ -1,4 +1,5 @@
 import json
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -36,7 +37,8 @@ def create_contract(request: ContractRequest, db: Session = Depends(get_db)) -> 
     path = storage_path("contracts", number)
     path.write_bytes(pdf)
     document = Contract(contract_number=number, client_name=request.client_name, project_name=request.project_name,
-                        terms_json=json.dumps(request_data, default=str), pdf_path=str(path))
+                        terms_json=json.dumps(request_data, default=str), pdf_path=str(path),
+                        pdf_hash=hashlib.sha256(pdf).hexdigest())
     db.add(document)
     db.commit()
     return Response(
@@ -65,7 +67,8 @@ def create_invoice(request: InvoiceRequest, db: Session = Depends(get_db)) -> Re
     path = storage_path("invoices", number)
     path.write_bytes(pdf)
     document = Invoice(invoice_number=number, client_name=request.client_name, amount=request.amount,
-                       client_email=request.client_email, currency=request.currency, pdf_path=str(path))
+                       client_email=request.client_email, currency=request.currency, pdf_path=str(path),
+                       pdf_hash=hashlib.sha256(pdf).hexdigest())
     db.add(document)
     db.commit()
     return Response(content=pdf, media_type="application/pdf",
@@ -108,6 +111,20 @@ def get_document_status(number: str, db: Session = Depends(get_db)) -> dict:
                 "client_name": invoice.client_name, "status": invoice.status,
                 "created_at": invoice.created_at}
     raise HTTPException(status_code=404, detail="Document not found")
+
+
+@app.get("/verify/{number}")
+def verify_document(number: str, db: Session = Depends(get_db)) -> dict:
+    contract = db.query(Contract).filter_by(contract_number=number).first()
+    document_type = "contract"
+    if not contract:
+        contract = db.query(Invoice).filter_by(invoice_number=number).first()
+        document_type = "invoice"
+    if not contract: raise HTTPException(status_code=404, detail="Document not found")
+    path = Path(contract.pdf_path)
+    actual_hash = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+    return {"number": number, "type": document_type, "status": contract.status,
+            "issued": True, "hash": contract.pdf_hash, "hash_valid": actual_hash == contract.pdf_hash}
 
 
 @app.post("/contracts/{document_id}/send")
