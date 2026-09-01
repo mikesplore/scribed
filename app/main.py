@@ -1,5 +1,6 @@
 import json
 import hashlib
+import logging
 import os
 import time
 from collections import defaultdict, deque
@@ -11,7 +12,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
-from .db import get_db, init_db, next_number, storage_path
+from .db import get_db, next_number, storage_path
 from .models import AuditLog, Contract, Invoice
 from .mailer import send_pdf
 
@@ -19,8 +20,8 @@ load_dotenv()
 from .render import render_pdf
 from .schemas import ContractRequest, InvoiceRequest
 
+logger = logging.getLogger(__name__)
 app = FastAPI(title="Scribed", description="mikesplore contract and invoice PDF generation")
-init_db()
 _requests: dict[str, deque[float]] = defaultdict(deque)
 
 def audit(db, action: str, kind: str, number: str, detail: str | None = None):
@@ -40,7 +41,11 @@ async def require_api_token(request: Request, call_next):
     if len(window) >= 60:
         return Response(content='{"detail":"Rate limit exceeded"}', status_code=429, media_type="application/json")
     window.append(now)
-    return await call_next(request)
+    try:
+        return await call_next(request)
+    except Exception:
+        logger.exception("Unhandled application error: %s %s", request.method, request.url.path)
+        raise
 
 
 @app.get("/health")

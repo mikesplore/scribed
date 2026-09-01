@@ -33,7 +33,9 @@ cp .env.example .env
 
 Scribed loads variables from `.env` automatically. Do not commit `.env`.
 
-The API documentation is at <http://localhost:8000/docs>. The default SQLite database and `storage/` directory are created automatically.
+The API documentation is at <http://localhost:8000/docs> locally, or at <https://scribed.mikesplore.me/docs> in production. The default SQLite database and `storage/` directory are created automatically.
+
+In Docker, database migrations run automatically before the API and Telegram bot start (`alembic upgrade head`). Set `DATABASE_URL` in the container environment to the PostgreSQL connection string. For local development, update the schema with `alembic upgrade head`.
 
 ```bash
 source .venv/bin/activate
@@ -56,6 +58,8 @@ The bot is a long-running polling process.
 /paid NUMBER
 /cancel
 ```
+
+Use `/help` to see the complete capability list. Telegram also shows these commands in its native command menu after the bot starts.
 
 Document creation is conversational and requires confirmation. `/start` also provides buttons for creation, listing, and deletion. Only `TELEGRAM_OWNER_ID` can use commands.
 

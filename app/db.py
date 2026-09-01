@@ -15,6 +15,12 @@ class Base(DeclarativeBase):
 
 
 def init_db() -> None:
+    """Create the local schema for backwards-compatible test/dev setup.
+
+    Production startup uses Alembic via docker-start.sh. Keeping this helper
+    avoids breaking existing local scripts and tests that explicitly request
+    an in-process SQLite database initialization.
+    """
     from . import models  # noqa: F401
     Base.metadata.create_all(bind=engine)
     if engine.dialect.name == "sqlite":
