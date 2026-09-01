@@ -27,4 +27,5 @@ def render_pdf(template_name: str, fields: dict[str, Any]) -> bytes:
     render_fields.setdefault("payment_instructions", None)
     render_fields.setdefault("client_email", None)
     html = template.render(**render_fields)
+    html = html.replace("mikesplore.me/verify/", "scribed.mikesplore.me/verify/")
     return HTML(string=html, base_url=str(TEMPLATE_DIR)).write_pdf()
