@@ -42,6 +42,17 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     async with httpx.AsyncClient(base_url=API_URL) as api: response = await api.get(f"/documents/{context.args[0]}")
     await update.message.reply_text(response.text if response.is_success else f"{response.status_code}: {response.text}")
 
+async def list_documents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not owner_only(update): return
+    kind = "contracts" if update.message.text.split()[0].lstrip("/") == "contracts" else "invoices"
+    async with httpx.AsyncClient(base_url=API_URL) as api: response = await api.get(f"/{kind}")
+    if not response.is_success:
+        await update.message.reply_text(response.text); return
+    documents = response.json()
+    if not documents:
+        await update.message.reply_text(f"No {kind} found."); return
+    await update.message.reply_text("\n".join(f"{x['number']} — {x['client_name']} — {x['status']}" for x in documents))
+
 async def transition(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not owner_only(update) or len(context.args) != 1:
         await update.message.reply_text("Usage: /send, /accepted, or /paid NUMBER"); return
@@ -61,6 +72,8 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("newinvoice", new_invoice))
     app.add_handler(CommandHandler("newcontract", new_contract))
     app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("contracts", list_documents))
+    app.add_handler(CommandHandler("invoices", list_documents))
     app.add_handler(CommandHandler("send", transition))
     app.add_handler(CommandHandler("accepted", transition))
     app.add_handler(CommandHandler("paid", transition))

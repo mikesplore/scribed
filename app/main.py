@@ -117,6 +117,20 @@ def get_document_status(number: str, db: Session = Depends(get_db)) -> dict:
     raise HTTPException(status_code=404, detail="Document not found")
 
 
+@app.get("/contracts")
+def list_contracts(db: Session = Depends(get_db)) -> list[dict]:
+    return [{"id": item.id, "number": item.contract_number, "client_name": item.client_name,
+             "project_name": item.project_name, "status": item.status, "created_at": item.created_at}
+            for item in db.query(Contract).order_by(Contract.created_at.desc()).all()]
+
+
+@app.get("/invoices")
+def list_invoices(db: Session = Depends(get_db)) -> list[dict]:
+    return [{"id": item.id, "number": item.invoice_number, "client_name": item.client_name,
+             "status": item.status, "created_at": item.created_at}
+            for item in db.query(Invoice).order_by(Invoice.created_at.desc()).all()]
+
+
 @app.get("/contracts/by-project/{gatekeeper_project_id}")
 def contract_by_project(gatekeeper_project_id: str, db: Session = Depends(get_db)) -> dict:
     document = db.query(Contract).filter_by(gatekeeper_project_id=gatekeeper_project_id).order_by(Contract.created_at.desc()).first()
