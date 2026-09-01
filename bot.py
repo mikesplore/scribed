@@ -95,8 +95,16 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "Scribed commands:\n\n"
         "/newcontract — create a contract\n"
         "/newinvoice — create an invoice\n"
+        "\nCreation options:\n"
+        "• From scratch\n"
+        "• From a Gatekeeper project (prefills client, project, balance, and link)\n\n"
         "/contracts — list active contracts\n"
         "/invoices — list active invoices\n"
+        "Use the buttons on each document to view status, send, duplicate, or archive.\n"
+        "/projects — list Gatekeeper projects\n"
+        "/project SLUG — view project payments and balance\n"
+        "/client NAME — view client documents and totals\n"
+        "/duplicate NUMBER — create a new draft from an existing document\n"
         "/status NUMBER — check document status\n"
         "/send NUMBER — send a document by email\n"
         "/accepted NUMBER — mark a contract accepted\n"
@@ -666,6 +674,8 @@ async def set_command_menu(application: Application) -> None:
         BotCommand("invoices", "List invoices"),
         BotCommand("projects", "List Gatekeeper projects"),
         BotCommand("project", "View project details and payments"),
+        BotCommand("client", "View client history"),
+        BotCommand("duplicate", "Duplicate a document"),
         BotCommand("status", "Check document status"),
         BotCommand("send", "Send a document"),
         BotCommand("accepted", "Mark a contract accepted"),
