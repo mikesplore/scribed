@@ -150,7 +150,12 @@ async def begin_project_document(update: Update, context: ContextTypes.DEFAULT_T
     missing = [field for field in fields if not context.user_data.get(field)]
     context.user_data["index"] = fields.index(missing[0]) if missing else 0
     if not missing:
-        await query.message.reply_text("I filled this from Gatekeeper. Reply `confirm` to create it, or `/cancel` to stop.")
+        await query.message.reply_text(
+            "I filled this from Gatekeeper. Ready to create it?",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Create", callback_data="create_confirm"),
+                                                 InlineKeyboardButton("Edit", callback_data="create_edit"),
+                                                 InlineKeyboardButton("Cancel", callback_data="create_cancel")]]),
+        )
         return 1
     await query.message.reply_text(
         f"Starting a {kind} for {values.get('client_name', 'this project')}. "
@@ -167,12 +172,33 @@ async def collect_field(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if index < len(fields):
         context.user_data["index"] = index; await update.message.reply_text(FIELD_PROMPTS[fields[index]]); return 0
     summary = "\n".join(f"{field.replace('_', ' ').title()}: {context.user_data[field]}" for field in fields)
-    await update.message.reply_text(f"Please confirm:\n\n{summary}\n\nReply `confirm` to create it or `cancel` to stop.")
+    await update.message.reply_text(
+        f"Here’s the draft preview:\n\n{summary}\n\nReady to make it official?",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Create", callback_data="create_confirm"),
+                                             InlineKeyboardButton("Edit", callback_data="create_edit"),
+                                             InlineKeyboardButton("Cancel", callback_data="create_cancel")]]),
+    )
     return 1
 
 async def confirm_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if update.message.text.lower() != "confirm":
-        await update.message.reply_text("Cancelled. Use /start to begin again."); return ConversationHandler.END
+    query = update.callback_query
+    if query:
+        await query.answer()
+        action = query.data
+        target = query.message
+        if action == "create_edit":
+            context.user_data["index"] = 0
+            await target.reply_text("Which field would you like to revisit? Type /cancel to stop, or start with the client name.")
+            return 0
+        if action == "create_cancel":
+            context.user_data.clear()
+            await target.reply_text("Cancelled. Nothing was created.")
+            return ConversationHandler.END
+    else:
+        action = update.message.text.lower()
+        target = update.message
+    if action != "create_confirm" and action != "confirm":
+        await target.reply_text("Cancelled. Nothing was created."); return ConversationHandler.END
     data = {field: context.user_data[field] for field in context.user_data["fields"] if field in context.user_data}
     if context.user_data.get("gatekeeper_project_id"):
         data["gatekeeper_project_id"] = context.user_data["gatekeeper_project_id"]
@@ -187,11 +213,11 @@ async def confirm_conversation(update: Update, context: ContextTypes.DEFAULT_TYP
         async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS, timeout=HTTP_TIMEOUT) as api: response = await api.post(endpoint, json=data, headers={"Idempotency-Key": context.user_data["idempotency_key"]})
     except httpx.RequestError:
         logger.exception("Scribed API request failed")
-        await update.message.reply_text("I couldn't reach Scribed. Your request was not confirmed; please reply `confirm` to retry safely.")
+        await target.reply_text("I couldn't reach Scribed. Nothing was created—tap Create to retry safely.")
         return 1
-    if response.is_success: await update.message.reply_document(InputFile(response.content, filename=filename))
+    if response.is_success: await target.reply_document(InputFile(response.content, filename=filename), caption="Done — your document is ready.")
     else:
-        await update.message.reply_text(f"Could not create document: {api_error(response)}\nPlease correct the value and reply `confirm` to retry, or `/cancel`.")
+        await target.reply_text(f"I hit a snag while creating it: {api_error(response)}\nNothing was created. You can tap Create to retry or /cancel.")
         return 1
     return ConversationHandler.END
 
@@ -428,8 +454,37 @@ async def list_documents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     documents = response.json()
     if not documents:
         await target.reply_text(f"No {kind} found."); return
-    lines = [f"{x['number']} — {x['client_name']} — {x['status']}" for x in documents]
-    await reply_in_chunks(target, f"{kind.title()}:\n" + "\n".join(lines))
+    for item in documents[:30]:
+        label = f"{item['number']} — {item['client_name']} — {item['status']}"
+        actions = [InlineKeyboardButton("Status", callback_data=f"doc_action:status:{kind}:{item['id']}:{item['number']}"),
+                   InlineKeyboardButton("Duplicate", callback_data=f"doc_action:duplicate:{kind}:{item['id']}")]
+        if item["status"] == "draft":
+            actions.insert(1, InlineKeyboardButton("Send", callback_data=f"doc_action:send:{kind}:{item['id']}"))
+        if kind == "contracts":
+            actions.append(InlineKeyboardButton("Archive", callback_data=f"doc_action:archive:{kind}:{item['id']}"))
+        await target.reply_text(label, reply_markup=InlineKeyboardMarkup([actions]))
+
+async def document_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not owner_only(update): return
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split(":", 4)
+    _, action, kind, document_id = parts[:4]
+    number = parts[4] if len(parts) == 5 else None
+    async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS, timeout=HTTP_TIMEOUT) as api:
+        if action == "status":
+            response = await api.get(f"/documents/{number}")
+        elif action == "archive":
+            response = await api.delete(f"/{kind}/{document_id}")
+        else:
+            response = await api.post(f"/{kind}/{document_id}/{action}")
+    if not response.is_success:
+        await query.message.reply_text(f"Could not {action} document: {api_error(response)}")
+        return
+    if action in {"duplicate", "send"} and response.headers.get("content-type", "").startswith("application/pdf"):
+        await query.message.reply_document(InputFile(response.content, filename=f"{action}.pdf"), caption="Done.")
+    else:
+        await query.message.reply_text("Done — " + response.text[:500])
 
 async def transition(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not owner_only(update) or len(context.args) != 1:
@@ -453,7 +508,8 @@ def build_application() -> Application:
         entry_points=[CommandHandler("newinvoice", begin_conversation), CommandHandler("newcontract", begin_conversation),
                       CallbackQueryHandler(begin_conversation, pattern="^new_(invoice|contract)$")],
         states={0: [MessageHandler(filters.TEXT & ~filters.COMMAND, collect_field)],
-                1: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_conversation)]},
+                1: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_conversation),
+                    CallbackQueryHandler(confirm_conversation, pattern="^create_(confirm|edit|cancel)$")]},
         fallbacks=[CommandHandler("cancel", cancel)],
     )
     app.add_handler(CommandHandler("start", start))
@@ -483,6 +539,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("project", project_details))
     app.add_handler(CommandHandler("projects", delete_project_menu))
     app.add_handler(CallbackQueryHandler(list_documents, pattern="^list_(contracts|invoices)$"))
+    app.add_handler(CallbackQueryHandler(document_action, pattern="^doc_action:(status|send|duplicate|archive):"))
     app.add_handler(CommandHandler("send", transition))
     app.add_handler(CommandHandler("accepted", transition))
     app.add_handler(CommandHandler("paid", transition))
