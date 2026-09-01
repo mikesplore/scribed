@@ -40,11 +40,28 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     async with httpx.AsyncClient(base_url=API_URL) as api: response = await api.get(f"/documents/{context.args[0]}")
     await update.message.reply_text(response.text if response.is_success else f"{response.status_code}: {response.text}")
 
+async def transition(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not owner_only(update) or len(context.args) != 1:
+        await update.message.reply_text("Usage: /send, /accepted, or /paid NUMBER"); return
+    number = context.args[0]
+    async with httpx.AsyncClient(base_url=API_URL) as api:
+        info = await api.get(f"/documents/{number}")
+        if not info.is_success:
+            await update.message.reply_text(info.text); return
+        data = info.json()
+        action = update.message.text.split()[0].lstrip("/")
+        paths = {"send": f"/{data['type']}s/{data['id']}/send", "accepted": f"/contracts/{data['id']}/mark-accepted", "paid": f"/invoices/{data['id']}/mark-paid"}
+        response = await api.post(paths[action])
+    await update.message.reply_text(response.text if response.is_success else f"{response.status_code}: {response.text}")
+
 def build_application() -> Application:
     app = Application.builder().token(os.environ["TELEGRAM_BOT_TOKEN"]).build()
     app.add_handler(CommandHandler("newinvoice", new_invoice))
     app.add_handler(CommandHandler("newcontract", new_contract))
     app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("send", transition))
+    app.add_handler(CommandHandler("accepted", transition))
+    app.add_handler(CommandHandler("paid", transition))
     return app
 
 if __name__ == "__main__": build_application().run_polling()
