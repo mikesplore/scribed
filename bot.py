@@ -210,6 +210,7 @@ async def begin_project_document(update: Update, context: ContextTypes.DEFAULT_T
     await query.answer()
     kind = query.data.split(":", 2)[1]
     project = context.user_data.get("gatekeeper_project", {})
+    payments = context.user_data.get("gatekeeper_payments", [])
     if not project:
         slug = query.data.split(":", 2)[2]
         base = os.environ.get("GATEKEEPER_BASE_URL", "").rstrip("/")
@@ -219,6 +220,7 @@ async def begin_project_document(update: Update, context: ContextTypes.DEFAULT_T
                 response = await api.get(base + f"/api/admin/projects/{slug}", headers={"Authorization": f"Bearer {login.json()['token']}"})
             if response.is_success:
                 body = response.json(); project = body.get("project", body)
+                payments = body.get("payments", [])
         except (httpx.RequestError, KeyError, ValueError):
             project = {}
     if not project:
@@ -226,11 +228,12 @@ async def begin_project_document(update: Update, context: ContextTypes.DEFAULT_T
         return ConversationHandler.END
     context.user_data.clear()
     context.user_data.update({"kind": kind, "fields": INVOICE_FIELDS if kind == "invoice" else CONTRACT_FIELDS, "index": 0})
+    paid, balance = payment_summary(project, payments)
     values = {
         "client_name": project.get("clientName") or project.get("client_name"),
         "client_email": project.get("clientEmail") or project.get("client_email") or project.get("email"),
         "project_name": project.get("name") or project.get("projectName") or project.get("project_name"),
-        "amount": project.get("amountDue") or project.get("amount_due"),
+        "amount": str(balance) if balance is not None and balance > 0 else None,
         "currency": project.get("currency"),
     }
     if kind == "contract":
@@ -393,6 +396,7 @@ async def project_details(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await target.reply_text(f"Could not load project: {api_error(response)}"); return
     body = response.json(); project = body.get("project", body)
     context.user_data["gatekeeper_project"] = project
+    context.user_data["gatekeeper_payments"] = payments
     payments = body.get("payments", [])
     paid, balance = payment_summary(project, payments)
     currency = project.get("currency", "")
