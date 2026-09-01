@@ -1,0 +1,8 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>{{ invoice_number }}</title><link rel="stylesheet" href="styles.css"></head>
+<body>
+<header class="masthead"><div><div class="brand">mikesplore</div><div class="muted">Independent digital work</div></div><div class="doc-meta"><strong>INVOICE</strong><br>{{ invoice_number }}<br>Issued {{ issue_date.strftime('%d %B %Y') }}</div></header>
+<main><div class="invoice-title"><h1>Invoice</h1><div><strong>Bill to</strong><br>{{ client_name }}{% if client_email %}<br>{{ client_email }}{% endif %}<br>{{ project_name }}</div></div>
+<table><thead><tr><th>Description</th><th class="amount">Amount</th></tr></thead><tbody><tr><td>{{ description }}<br><span class="muted">Project: {{ project_name }}</span></td><td class="amount">{{ currency }} {{ "{:,.2f}".format(amount) }}</td></tr></tbody><tfoot><tr><th>Total due</th><th class="amount">{{ currency }} {{ "{:,.2f}".format(amount) }}</th></tr></tfoot></table>
+<div class="payment"><strong>Payment details</strong><p>{{ payment_instructions }}</p>{% if due_date %}<p><strong>Due:</strong> {{ due_date.strftime('%d %B %Y') }}</p>{% endif %}</div></main><footer>Thank you for working with mikesplore · {{ invoice_number }}</footer>
+</body></html>

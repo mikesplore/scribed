@@ -1,0 +1,1 @@
+"""Scribed document generation service."""
