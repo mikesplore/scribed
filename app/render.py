@@ -19,4 +19,4 @@ def render_pdf(template_name: str, fields: dict[str, Any]) -> bytes:
     """Render a named HTML template to PDF bytes."""
     template = environment.get_template(template_name)
     html = template.render(**fields)
-    return HTML(string=html, base_url=str(BASE_DIR)).write_pdf()
+    return HTML(string=html, base_url=str(TEMPLATE_DIR)).write_pdf()

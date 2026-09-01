@@ -16,6 +16,7 @@ class Contract(Base):
     status: Mapped[str] = mapped_column(String(20), default="draft")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     pdf_path: Mapped[str] = mapped_column(Text)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class DocumentSequence(Base):
@@ -29,8 +30,10 @@ class Invoice(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     invoice_number: Mapped[str] = mapped_column(String(40), unique=True, index=True)
     client_name: Mapped[str] = mapped_column(String(255))
+    client_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     amount: Mapped[float] = mapped_column(Numeric(14, 2))
     currency: Mapped[str] = mapped_column(String(3))
     status: Mapped[str] = mapped_column(String(20), default="draft")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     pdf_path: Mapped[str] = mapped_column(Text)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

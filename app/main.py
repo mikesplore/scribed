@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -7,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from .db import get_db, init_db, next_number, storage_path
 from .models import Contract, Invoice
+from .mailer import send_pdf
 from .render import render_pdf
 from .schemas import ContractRequest, InvoiceRequest
 
@@ -63,7 +65,7 @@ def create_invoice(request: InvoiceRequest, db: Session = Depends(get_db)) -> Re
     path = storage_path("invoices", number)
     path.write_bytes(pdf)
     document = Invoice(invoice_number=number, client_name=request.client_name, amount=request.amount,
-                       currency=request.currency, pdf_path=str(path))
+                       client_email=request.client_email, currency=request.currency, pdf_path=str(path))
     db.add(document)
     db.commit()
     return Response(content=pdf, media_type="application/pdf",
@@ -106,3 +108,40 @@ def get_document_status(number: str, db: Session = Depends(get_db)) -> dict:
                 "client_name": invoice.client_name, "status": invoice.status,
                 "created_at": invoice.created_at}
     raise HTTPException(status_code=404, detail="Document not found")
+
+
+@app.post("/contracts/{document_id}/send")
+def send_contract(document_id: int, db: Session = Depends(get_db)) -> dict:
+    document = db.get(Contract, document_id)
+    if not document: raise HTTPException(status_code=404, detail="Contract not found")
+    terms = json.loads(document.terms_json)
+    if not terms.get("client_email"): raise HTTPException(status_code=400, detail="Contract has no client email")
+    send_pdf(terms["client_email"], f"Contract {document.contract_number}", f"{document.contract_number}.pdf", document.pdf_path)
+    document.status = "sent"; db.commit()
+    return {"number": document.contract_number, "status": document.status}
+
+
+@app.post("/invoices/{document_id}/send")
+def send_invoice(document_id: int, db: Session = Depends(get_db)) -> dict:
+    document = db.get(Invoice, document_id)
+    if not document: raise HTTPException(status_code=404, detail="Invoice not found")
+    if not document.client_email: raise HTTPException(status_code=400, detail="Invoice has no client email")
+    send_pdf(document.client_email, f"Invoice {document.invoice_number}", f"{document.invoice_number}.pdf", document.pdf_path)
+    document.status = "sent"; db.commit()
+    return {"number": document.invoice_number, "status": document.status}
+
+
+@app.post("/contracts/{document_id}/mark-accepted")
+def mark_contract_accepted(document_id: int, db: Session = Depends(get_db)) -> dict:
+    document = db.get(Contract, document_id)
+    if not document: raise HTTPException(status_code=404, detail="Contract not found")
+    document.status = "accepted"; document.accepted_at = datetime.now(timezone.utc); db.commit()
+    return {"number": document.contract_number, "status": document.status, "accepted_at": document.accepted_at}
+
+
+@app.post("/invoices/{document_id}/mark-paid")
+def mark_invoice_paid(document_id: int, db: Session = Depends(get_db)) -> dict:
+    document = db.get(Invoice, document_id)
+    if not document: raise HTTPException(status_code=404, detail="Invoice not found")
+    document.status = "paid"; document.paid_at = datetime.now(timezone.utc); db.commit()
+    return {"number": document.invoice_number, "status": document.status, "paid_at": document.paid_at}

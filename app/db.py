@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./scribed.db")
@@ -17,6 +17,15 @@ class Base(DeclarativeBase):
 def init_db() -> None:
     from . import models  # noqa: F401
     Base.metadata.create_all(bind=engine)
+    if engine.dialect.name == "sqlite":
+        additions = {"contracts": [("accepted_at", "DATETIME")],
+                     "invoices": [("client_email", "VARCHAR(255)"), ("paid_at", "DATETIME")]}
+        with engine.begin() as connection:
+            for table, columns in additions.items():
+                existing = {column["name"] for column in inspect(engine).get_columns(table)}
+                for name, definition in columns:
+                    if name not in existing:
+                        connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}"))
 
 
 def get_db():
