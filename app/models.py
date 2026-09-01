@@ -12,6 +12,7 @@ class Contract(Base):
     contract_number: Mapped[str] = mapped_column(String(40), unique=True, index=True)
     client_name: Mapped[str] = mapped_column(String(255))
     project_name: Mapped[str] = mapped_column(String(255))
+    gatekeeper_project_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     terms_json: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(20), default="draft")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))

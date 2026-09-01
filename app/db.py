@@ -18,7 +18,7 @@ def init_db() -> None:
     from . import models  # noqa: F401
     Base.metadata.create_all(bind=engine)
     if engine.dialect.name == "sqlite":
-        additions = {"contracts": [("accepted_at", "DATETIME"), ("pdf_hash", "VARCHAR(64)")],
+        additions = {"contracts": [("accepted_at", "DATETIME"), ("pdf_hash", "VARCHAR(64)"), ("gatekeeper_project_id", "VARCHAR(64)")],
                      "invoices": [("client_email", "VARCHAR(255)"), ("paid_at", "DATETIME"), ("pdf_hash", "VARCHAR(64)")]}
         with engine.begin() as connection:
             for table, columns in additions.items():

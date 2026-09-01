@@ -16,6 +16,7 @@ class ContractRequest(BaseModel):
     payment_schedule: str = Field(min_length=1)
     effective_date: date = Field(default_factory=date.today)
     contract_number: str = Field(default="DRAFT-CONTRACT")
+    gatekeeper_project_id: str | None = None
 
 
 class InvoiceRequest(BaseModel):

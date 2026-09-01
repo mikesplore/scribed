@@ -37,6 +37,7 @@ def create_contract(request: ContractRequest, db: Session = Depends(get_db)) -> 
     path = storage_path("contracts", number)
     path.write_bytes(pdf)
     document = Contract(contract_number=number, client_name=request.client_name, project_name=request.project_name,
+                        gatekeeper_project_id=request.gatekeeper_project_id,
                         terms_json=json.dumps(request_data, default=str), pdf_path=str(path),
                         pdf_hash=hashlib.sha256(pdf).hexdigest())
     db.add(document)
@@ -111,6 +112,25 @@ def get_document_status(number: str, db: Session = Depends(get_db)) -> dict:
                 "client_name": invoice.client_name, "status": invoice.status,
                 "created_at": invoice.created_at}
     raise HTTPException(status_code=404, detail="Document not found")
+
+
+@app.get("/contracts/by-project/{gatekeeper_project_id}")
+def contract_by_project(gatekeeper_project_id: str, db: Session = Depends(get_db)) -> dict:
+    document = db.query(Contract).filter_by(gatekeeper_project_id=gatekeeper_project_id).order_by(Contract.created_at.desc()).first()
+    if not document: raise HTTPException(status_code=404, detail="Contract not found for project")
+    terms = json.loads(document.terms_json)
+    return {"id": document.id, "contract_number": document.contract_number, "project_name": document.project_name,
+            "status": document.status, "late_payment_clause": "Work may be paused after written notice when payment is overdue.",
+            "terms": terms}
+
+
+@app.post("/integrations/gatekeeper/suspensions")
+def record_gatekeeper_suspension(payload: dict, db: Session = Depends(get_db)) -> dict:
+    project_id = str(payload.get("project_id", ""))
+    document = db.query(Contract).filter_by(gatekeeper_project_id=project_id).order_by(Contract.created_at.desc()).first()
+    if not document: raise HTTPException(status_code=404, detail="Contract not found for project")
+    return {"contract_number": document.contract_number, "action": "suspension_recorded",
+            "reason": payload.get("reason", "Gatekeeper project suspended")}
 
 
 @app.get("/verify/{number}")
