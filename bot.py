@@ -116,24 +116,27 @@ async def delete_contract_menu(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def delete_project_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not owner_only(update): return
-    await update.callback_query.answer()
+    query = update.callback_query
+    if query:
+        await query.answer()
+    target = query.message if query else update.message
     missing = [key for key in ("GATEKEEPER_BASE_URL", "GATEKEEPER_EMAIL", "GATEKEEPER_PASSWORD") if not os.getenv(key)]
     if missing:
-        await update.callback_query.message.reply_text(f"Gatekeeper is not configured. Missing: {', '.join(missing)}")
+        await target.reply_text(f"Gatekeeper is not configured. Missing: {', '.join(missing)}")
         return
     async with httpx.AsyncClient() as api:
         login = await api.post(os.environ["GATEKEEPER_BASE_URL"].rstrip("/") + "/api/auth/login", json={"email": os.environ["GATEKEEPER_EMAIL"], "password": os.environ["GATEKEEPER_PASSWORD"]})
         if not login.is_success:
-            await update.callback_query.message.reply_text(f"Gatekeeper login failed: {api_error(login)}")
+            await target.reply_text(f"Gatekeeper login failed: {api_error(login)}")
             return
         token = login.json()["token"]
         response = await api.get(os.environ["GATEKEEPER_BASE_URL"].rstrip("/") + "/api/admin/projects", headers={"Authorization": f"Bearer {token}"})
     if not response.is_success:
-        await update.callback_query.message.reply_text(f"Could not load Gatekeeper projects: {api_error(response)}")
+        await target.reply_text(f"Could not load Gatekeeper projects: {api_error(response)}")
         return
     items = response.json()
     keyboard = [[InlineKeyboardButton(f"View {x['slug']}", callback_data=f"project:{x['slug']}"), InlineKeyboardButton("Archive", callback_data=f"delete_project:{x['slug']}")] for x in items]
-    await update.callback_query.message.reply_text("Select a Gatekeeper project to archive:", reply_markup=InlineKeyboardMarkup(keyboard or [[InlineKeyboardButton("No projects found", callback_data="noop")]]))
+    await target.reply_text("Select a Gatekeeper project to archive:", reply_markup=InlineKeyboardMarkup(keyboard or [[InlineKeyboardButton("No projects found", callback_data="noop")]]))
 
 async def project_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not owner_only(update): return
