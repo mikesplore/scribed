@@ -528,19 +528,21 @@ async def duplicate_document(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(f"Could not duplicate document: {api_error(response)}")
 
 async def client_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    target = update.effective_message
     if not owner_only(update) or not context.args:
-        await update.message.reply_text("Usage: /client CLIENT NAME")
+        if target:
+            await target.reply_text("Usage: /client CLIENT NAME")
         return
     name = " ".join(context.args)
     async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS, timeout=HTTP_TIMEOUT) as api:
         response = await api.get(f"/clients/{quote(name, safe='')}")
     if not response.is_success:
-        await update.message.reply_text(f"Could not load client history: {api_error(response)}"); return
+        await target.reply_text(f"Could not load client history: {api_error(response)}"); return
     body = response.json(); totals = body["totals"]
     lines = [f"Client: {body['client_name']}", f"Billed: {totals['billed']}", f"Paid: {totals['paid']}", f"Balance: {totals['balance']}", ""]
     lines += [f"{x['number']} — {x['project_name']} — {x['status']}" for x in body["contracts"]]
     lines += [f"{x['number']} — {x['project_name']} — {x['amount']} {x['currency']} — {x['status']}" for x in body["invoices"]]
-    await update.message.reply_text("\n".join(lines)[:3900])
+    await target.reply_text("\n".join(lines)[:3900])
 
 async def my_documents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not owner_only(update): return
