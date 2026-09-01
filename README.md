@@ -19,6 +19,8 @@ For the Telegram bot, set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_OWNER_ID` in `.env`
 .venv/bin/python bot.py
 ```
 
+The bot is a long-running polling process, so the terminal remains occupied while it waits. Leave it running and message the bot in Telegram. A successful start logs `Starting Scribed Telegram bot`; network or token errors are logged in the same terminal.
+
 Document email delivery uses Resend. Set `RESEND_API_KEY` and `RESEND_FROM_EMAIL` before using the `/send` endpoints or Telegram `/send` command.
 
 Use Telegram `/contracts` or `/invoices` to list stored documents, and `/status NUMBER` for one document.

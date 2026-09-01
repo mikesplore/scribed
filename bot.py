@@ -1,11 +1,14 @@
 """Owner-gated Telegram client for Scribed."""
 import os
+import logging
 import httpx
 from dotenv import load_dotenv
 from telegram import InputFile, Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 load_dotenv()
+logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", level=logging.INFO)
+logger = logging.getLogger(__name__)
 API_URL = os.getenv("SCRIBED_API_URL", "http://localhost:8000").rstrip("/")
 OWNER_ID = int(os.environ["TELEGRAM_OWNER_ID"])
 
@@ -79,4 +82,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("paid", transition))
     return app
 
-if __name__ == "__main__": build_application().run_polling()
+if __name__ == "__main__":
+    logger.info("Starting Scribed Telegram bot (API: %s)", API_URL)
+    logger.info("Bot will keep this terminal open while waiting for Telegram messages")
+    build_application().run_polling(drop_pending_updates=True)
