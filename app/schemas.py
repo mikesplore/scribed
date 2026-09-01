@@ -1,7 +1,10 @@
 from datetime import date
 from decimal import Decimal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
+from typing import Annotated
+
+DocumentNumber = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,50}$")]
 
 
 class ContractRequest(BaseModel):
@@ -19,7 +22,7 @@ class ContractRequest(BaseModel):
     late_payment_days: int = Field(default=7, ge=1, le=90)
     revision_rounds: int = Field(default=3, ge=0, le=20)
     effective_date: date = Field(default_factory=date.today)
-    contract_number: str = Field(default="DRAFT-CONTRACT")
+    contract_number: DocumentNumber = Field(default="DRAFT-CONTRACT")
     gatekeeper_project_id: str | None = None
 
 
@@ -32,5 +35,5 @@ class InvoiceRequest(BaseModel):
     currency: str = Field(default="KES", min_length=3, max_length=3)
     issue_date: date = Field(default_factory=date.today)
     due_date: date | None = None
-    invoice_number: str = Field(default="DRAFT-INVOICE")
+    invoice_number: DocumentNumber = Field(default="DRAFT-INVOICE")
     payment_instructions: str = "Payment details will be shared by email."

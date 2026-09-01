@@ -12,6 +12,7 @@ logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", level=loggin
 logger = logging.getLogger(__name__)
 API_URL = os.getenv("SCRIBED_API_URL", "http://localhost:8000").rstrip("/")
 OWNER_ID = int(os.environ["TELEGRAM_OWNER_ID"])
+API_HEADERS = {"Authorization": f"Bearer {os.environ['SCRIBED_API_TOKEN']}"}
 
 def owner_only(update: Update) -> bool:
     return bool(update.effective_user and update.effective_user.id == OWNER_ID)
@@ -56,7 +57,7 @@ async def confirm_conversation(update: Update, context: ContextTypes.DEFAULT_TYP
     else:
         data["deliverables"] = [x.strip() for x in data["deliverables"].split(",") if x.strip()]
         endpoint, filename = "/contracts", "contract.pdf"
-    async with httpx.AsyncClient(base_url=API_URL) as api: response = await api.post(endpoint, json=data)
+    async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS) as api: response = await api.post(endpoint, json=data)
     if response.is_success: await update.message.reply_document(InputFile(response.content, filename=filename))
     else: await update.message.reply_text(f"Could not create document ({response.status_code}): {response.text[:300]}")
     return ConversationHandler.END
@@ -75,7 +76,7 @@ async def delete_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 async def delete_contract_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not owner_only(update): return
     await update.callback_query.answer()
-    async with httpx.AsyncClient(base_url=API_URL) as api: response = await api.get("/contracts")
+    async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS) as api: response = await api.get("/contracts")
     items = response.json() if response.is_success else []
     keyboard = [[InlineKeyboardButton(f"{x['number']} — {x['client_name']}", callback_data=f"delete_contract:{x['id']}")] for x in items]
     await update.callback_query.message.reply_text("Select a contract:", reply_markup=InlineKeyboardMarkup(keyboard or [[InlineKeyboardButton("No contracts found", callback_data="noop")]]))
@@ -119,7 +120,7 @@ async def perform_delete_contract(update: Update, context: ContextTypes.DEFAULT_
     if not owner_only(update) or "delete_contract_id" not in context.user_data: return
     if update.message.text.lower() != "confirm":
         context.user_data.pop("delete_contract_id", None); await update.message.reply_text("Deletion cancelled."); return
-    async with httpx.AsyncClient(base_url=API_URL) as api: response = await api.delete(f"/contracts/{context.user_data.pop('delete_contract_id')}")
+    async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS) as api: response = await api.delete(f"/contracts/{context.user_data.pop('delete_contract_id')}")
     await update.message.reply_text(response.text if response.is_success else f"Could not delete: {response.text}")
 
 async def new_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -141,7 +142,7 @@ async def new_contract(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text("Usage: /newcontract Client|Project|Scope|Deliverables, comma separated|Timeline|Amount|Payment schedule"); return
     client, project, scope, deliverables, timeline, amount, schedule = (value.strip() for value in values)
     payload = {"client_name": client, "project_name": project, "scope": scope, "deliverables": [x.strip() for x in deliverables.split(",") if x.strip()], "timeline": timeline, "amount": amount, "payment_schedule": schedule}
-    async with httpx.AsyncClient(base_url=API_URL) as api: response = await api.post("/contracts", json=payload)
+    async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS) as api: response = await api.post("/contracts", json=payload)
     if response.is_success: await update.message.reply_document(InputFile(response.content, filename="contract.pdf"))
     else: await update.message.reply_text(f"API error ({response.status_code}): {response.text[:300]}")
 
@@ -149,7 +150,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not owner_only(update): return
     if len(context.args) != 1:
         await update.message.reply_text("Usage: /status MK-CON-0001"); return
-    async with httpx.AsyncClient(base_url=API_URL) as api: response = await api.get(f"/documents/{context.args[0]}")
+    async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS) as api: response = await api.get(f"/documents/{context.args[0]}")
     await update.message.reply_text(response.text if response.is_success else f"{response.status_code}: {response.text}")
 
 async def list_documents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -158,7 +159,7 @@ async def list_documents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if query: await query.answer()
     source = query.data if query else update.message.text.split()[0].lstrip("/")
     kind = "contracts" if "contracts" in source else "invoices"
-    async with httpx.AsyncClient(base_url=API_URL) as api: response = await api.get(f"/{kind}")
+    async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS) as api: response = await api.get(f"/{kind}")
     target = query.message if query else update.message
     if not response.is_success:
         await target.reply_text(response.text); return
@@ -171,7 +172,7 @@ async def transition(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not owner_only(update) or len(context.args) != 1:
         await update.message.reply_text("Usage: /send, /accepted, or /paid NUMBER"); return
     number = context.args[0]
-    async with httpx.AsyncClient(base_url=API_URL) as api:
+    async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS) as api:
         info = await api.get(f"/documents/{number}")
         if not info.is_success:
             await update.message.reply_text(info.text); return

@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
@@ -19,6 +19,16 @@ from .schemas import ContractRequest, InvoiceRequest
 
 app = FastAPI(title="Scribed", description="mikesplore contract and invoice PDF generation")
 init_db()
+
+@app.middleware("http")
+async def require_api_token(request: Request, call_next):
+    path = request.url.path
+    expected = os.getenv("SCRIBED_API_TOKEN", "").strip()
+    if path == "/health" or path.startswith("/verify/"):
+        return await call_next(request)
+    if not expected or request.headers.get("authorization") != f"Bearer {expected}":
+        return Response(content='{"detail":"Authentication required"}', status_code=401, media_type="application/json")
+    return await call_next(request)
 
 
 @app.get("/health")
@@ -129,6 +139,7 @@ def list_contracts(db: Session = Depends(get_db)) -> list[dict]:
 def delete_contract(document_id: int, db: Session = Depends(get_db)) -> dict:
     document = db.get(Contract, document_id)
     if not document: raise HTTPException(status_code=404, detail="Contract not found")
+    if document.status != "draft": raise HTTPException(status_code=409, detail="Only draft contracts can be deleted")
     path = Path(document.pdf_path)
     if path.is_file(): path.unlink()
     number = document.contract_number
@@ -156,7 +167,7 @@ def contract_by_project(gatekeeper_project_id: str, db: Session = Depends(get_db
 @app.post("/integrations/gatekeeper/suspensions")
 def record_gatekeeper_suspension(payload: dict, db: Session = Depends(get_db), x_gatekeeper_secret: str | None = Header(default=None)) -> dict:
     expected = os.getenv("GATEKEEPER_INTEGRATION_SECRET")
-    if expected and x_gatekeeper_secret != expected: raise HTTPException(status_code=401, detail="Invalid integration secret")
+    if not expected or x_gatekeeper_secret != expected: raise HTTPException(status_code=401, detail="Invalid integration secret")
     project_id = str(payload.get("project_id", ""))
     document = db.query(Contract).filter_by(gatekeeper_project_id=project_id).order_by(Contract.created_at.desc()).first()
     if not document: raise HTTPException(status_code=404, detail="Contract not found for project")
@@ -182,6 +193,7 @@ def verify_document(number: str, db: Session = Depends(get_db)) -> dict:
 def send_contract(document_id: int, db: Session = Depends(get_db)) -> dict:
     document = db.get(Contract, document_id)
     if not document: raise HTTPException(status_code=404, detail="Contract not found")
+    if document.status != "draft": raise HTTPException(status_code=409, detail="Only draft contracts can be sent")
     terms = json.loads(document.terms_json)
     if not terms.get("client_email"): raise HTTPException(status_code=400, detail="Contract has no client email")
     send_pdf(terms["client_email"], f"Contract {document.contract_number}", f"{document.contract_number}.pdf", document.pdf_path)
@@ -193,6 +205,7 @@ def send_contract(document_id: int, db: Session = Depends(get_db)) -> dict:
 def send_invoice(document_id: int, db: Session = Depends(get_db)) -> dict:
     document = db.get(Invoice, document_id)
     if not document: raise HTTPException(status_code=404, detail="Invoice not found")
+    if document.status != "draft": raise HTTPException(status_code=409, detail="Only draft invoices can be sent")
     if not document.client_email: raise HTTPException(status_code=400, detail="Invoice has no client email")
     send_pdf(document.client_email, f"Invoice {document.invoice_number}", f"{document.invoice_number}.pdf", document.pdf_path)
     document.status = "sent"; db.commit()
