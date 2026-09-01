@@ -1,0 +1,13 @@
+services:
+  api:
+    image: "mikesplore/scribed:${SCRIBED_VERSION:-1}"
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9005"]
+    env_file: .env
+    ports: ["9005:9005"]
+    restart: unless-stopped
+  bot:
+    image: "mikesplore/scribed:${SCRIBED_VERSION:-1}"
+    command: ["python", "bot.py"]
+    env_file: .env
+    depends_on: [api]
+    restart: unless-stopped

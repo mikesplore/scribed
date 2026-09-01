@@ -24,13 +24,19 @@ def upgrade() -> None:
     # Bring databases created by the pre-Alembic create_all() implementation
     # up to the current schema as part of the baseline migration.
     for table, columns in {
-        "contracts": [("gatekeeper_project_id", sa.String(64)), ("pdf_hash", sa.String(64)), ("accepted_at", sa.DateTime), ("archived_at", sa.DateTime), ("idempotency_key", sa.String(128))],
-        "invoices": [("client_email", sa.String(255)), ("pdf_hash", sa.String(64)), ("paid_at", sa.DateTime), ("archived_at", sa.DateTime), ("idempotency_key", sa.String(128))],
+        "contracts": [("gatekeeper_project_id", sa.String(64)), ("pdf_hash", sa.String(64)), ("accepted_at", sa.DateTime), ("archived_at", sa.DateTime), ("idempotency_key", sa.String(128)), ("request_fingerprint", sa.String(64))],
+        "invoices": [("client_email", sa.String(255)), ("pdf_hash", sa.String(64)), ("paid_at", sa.DateTime), ("archived_at", sa.DateTime), ("idempotency_key", sa.String(128)), ("request_fingerprint", sa.String(64))],
     }.items():
         present = {column["name"] for column in sa.inspect(bind).get_columns(table)}
         for name, type_ in columns:
             if name not in present:
                 op.add_column(table, sa.Column(name, type_))
+    # Idempotency is deliberately enforced by the database, not only in the
+    # request handler, so concurrent retries cannot create duplicates.
+    for table in ("contracts", "invoices"):
+        columns = {column["name"] for column in sa.inspect(bind).get_columns(table)}
+        if "idempotency_key" in columns:
+            op.create_index(f"uq_{table}_idempotency_key", table, ["idempotency_key"], unique=True)
 
 
 def downgrade() -> None:

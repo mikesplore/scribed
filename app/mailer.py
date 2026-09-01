@@ -1,8 +1,7 @@
 import os
 import base64
-from pathlib import Path
-
 import httpx
+from .storage import read_pdf
 
 
 def send_pdf(recipient: str, subject: str, filename: str, pdf_path: str) -> None:
@@ -15,7 +14,7 @@ def send_pdf(recipient: str, subject: str, filename: str, pdf_path: str) -> None
             "to": [recipient],
             "subject": subject,
             "html": "<p>Please find the attached document from mikesplore.</p>",
-            "attachments": [{"filename": filename, "content": base64.b64encode(Path(pdf_path).read_bytes()).decode("ascii")}],
+            "attachments": [{"filename": filename, "content": base64.b64encode(read_pdf(pdf_path)).decode("ascii")}],
         },
         timeout=20,
     )

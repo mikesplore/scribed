@@ -7,28 +7,38 @@ from collections import defaultdict, deque
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
-from .db import get_db, next_number, storage_path
+from .db import get_db, next_number
 from .models import AuditLog, Contract, Invoice
 from .mailer import send_pdf
+from .storage import delete_pdf, read_pdf, upload_pdf
 
 load_dotenv()
 from .render import render_pdf
 from .schemas import ContractRequest, InvoiceRequest
 
 logger = logging.getLogger(__name__)
-app = FastAPI(title="Scribed", description="mikesplore contract and invoice PDF generation")
+production = os.getenv("ENVIRONMENT", "development").lower() == "production"
+app = FastAPI(title="Scribed", description="mikesplore contract and invoice PDF generation",
+              docs_url=None if production else "/docs", redoc_url=None if production else "/redoc",
+              openapi_url=None if production else "/openapi.json")
+MAX_BODY = 400 * 1024
 _requests: dict[str, deque[float]] = defaultdict(deque)
 
 def audit(db, action: str, kind: str, number: str, detail: str | None = None):
     db.add(AuditLog(action=action, document_type=kind, document_number=number, detail=detail))
 
+def fingerprint(payload: dict) -> str:
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
+
 @app.middleware("http")
 async def require_api_token(request: Request, call_next):
+    if request.headers.get("content-length") and int(request.headers["content-length"]) > MAX_BODY:
+        return Response(content='{"detail":"Payload Too Large"}', status_code=413, media_type="application/json")
     path = request.url.path
     expected = os.getenv("SCRIBED_API_TOKEN", "").strip()
     if path in {"/health", "/docs", "/redoc", "/openapi.json"} or path.startswith("/verify/"):
@@ -50,6 +60,8 @@ async def require_api_token(request: Request, call_next):
 
 @app.get("/health")
 def health() -> dict[str, str]:
+    from .health import check_dependencies
+    check_dependencies()
     return {"status": "ok"}
 
 
@@ -64,19 +76,24 @@ def create_contract(request: ContractRequest, db: Session = Depends(get_db), ide
     if not isinstance(idempotency_key, str): idempotency_key = None
     if idempotency_key:
         existing = db.query(Contract).filter_by(idempotency_key=idempotency_key).first()
-        if existing: return _file_response(existing.pdf_path, existing.contract_number)
+        if existing:
+            if existing.request_fingerprint != fingerprint(request.model_dump()):
+                raise HTTPException(status_code=409, detail="Idempotency-Key was already used with different data")
+            return _file_response(existing.pdf_path, existing.contract_number)
     number = next_number(db, "contract", "MK-CON")
     request_data = request.model_dump()
     request_data["contract_number"] = number
     pdf = render_pdf("contract.html", request_data)
-    path = storage_path("contracts", number)
-    path.write_bytes(pdf)
+    location = f"contracts/{number}.pdf"
     document = Contract(contract_number=number, client_name=request.client_name, project_name=request.project_name,
                         gatekeeper_project_id=request.gatekeeper_project_id,
-                        terms_json=json.dumps(request_data, default=str), pdf_path=str(path),
-                        pdf_hash=hashlib.sha256(pdf).hexdigest(), idempotency_key=idempotency_key)
+                        terms_json=json.dumps(request_data, default=str), pdf_path=location,
+                        pdf_hash=hashlib.sha256(pdf).hexdigest(), idempotency_key=idempotency_key,
+                        request_fingerprint=fingerprint(request.model_dump()))
     db.add(document)
     audit(db, "created", "contract", number)
+    db.commit()
+    document.pdf_path = upload_pdf(location, pdf)
     db.commit()
     return Response(
         content=pdf,
@@ -100,27 +117,34 @@ def create_invoice(request: InvoiceRequest, db: Session = Depends(get_db), idemp
     if not isinstance(idempotency_key, str): idempotency_key = None
     if idempotency_key:
         existing = db.query(Invoice).filter_by(idempotency_key=idempotency_key).first()
-        if existing: return _file_response(existing.pdf_path, existing.invoice_number)
+        if existing:
+            if existing.request_fingerprint != fingerprint(request.model_dump()):
+                raise HTTPException(status_code=409, detail="Idempotency-Key was already used with different data")
+            return _file_response(existing.pdf_path, existing.invoice_number)
     number = next_number(db, "invoice", "MK-INV")
     request_data = request.model_dump()
     request_data["invoice_number"] = number
     pdf = render_pdf("invoice.html", request_data)
-    path = storage_path("invoices", number)
-    path.write_bytes(pdf)
+    location = f"invoices/{number}.pdf"
     document = Invoice(invoice_number=number, client_name=request.client_name, amount=request.amount,
-                       client_email=request.client_email, currency=request.currency, pdf_path=str(path),
-                       pdf_hash=hashlib.sha256(pdf).hexdigest(), idempotency_key=idempotency_key)
+                       client_email=request.client_email, currency=request.currency, pdf_path=location,
+                       pdf_hash=hashlib.sha256(pdf).hexdigest(), idempotency_key=idempotency_key,
+                       request_fingerprint=fingerprint(request.model_dump()))
     db.add(document)
     audit(db, "created", "invoice", number)
+    db.commit()
+    document.pdf_path = upload_pdf(location, pdf)
     db.commit()
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f'inline; filename="{number}.pdf"'})
 
 
 def _file_response(path: str, filename: str) -> Response:
-    if not Path(path).is_file():
+    try:
+        content = read_pdf(path)
+    except (FileNotFoundError, OSError):
         raise HTTPException(status_code=404, detail="PDF file not found")
-    return Response(content=Path(path).read_bytes(), media_type="application/pdf",
+    return Response(content=content, media_type="application/pdf",
                     headers={"Content-Disposition": f'inline; filename="{filename}.pdf"'})
 
 
@@ -176,8 +200,7 @@ def permanently_delete_contract(document_id: int, db: Session = Depends(get_db))
     document = db.get(Contract, document_id)
     if not document: raise HTTPException(status_code=404, detail="Contract not found")
     if not document.archived_at: raise HTTPException(status_code=409, detail="Archive the contract before permanent deletion")
-    path = Path(document.pdf_path)
-    if path.is_file(): path.unlink()
+    delete_pdf(document.pdf_path)
     number = document.contract_number; audit(db, "permanently_deleted", "contract", number); db.delete(document); db.commit()
     return {"deleted": True, "number": number}
 
@@ -225,32 +248,35 @@ def verify_document(number: str, db: Session = Depends(get_db)) -> dict:
         contract = db.query(Invoice).filter_by(invoice_number=number).first()
         document_type = "invoice"
     if not contract: raise HTTPException(status_code=404, detail="Document not found")
-    path = Path(contract.pdf_path)
-    actual_hash = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
-    return {"number": number, "type": document_type, "status": contract.status,
-            "issued": True, "hash": contract.pdf_hash, "hash_valid": actual_hash == contract.pdf_hash}
+    try: actual_hash = hashlib.sha256(read_pdf(contract.pdf_path)).hexdigest()
+    except (FileNotFoundError, OSError): actual_hash = None
+    # The digest itself is safe to publish and lets a recipient independently
+    # compare the issued file; no client, project, amount, or storage path is
+    # exposed by this public endpoint.
+    return {"number": number, "status": contract.status, "issued": True,
+            "hash": contract.pdf_hash, "hash_valid": actual_hash == contract.pdf_hash}
 
 
 @app.post("/contracts/{document_id}/send")
-def send_contract(document_id: int, db: Session = Depends(get_db)) -> dict:
+def send_contract(document_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)) -> dict:
     document = db.get(Contract, document_id)
     if not document: raise HTTPException(status_code=404, detail="Contract not found")
     if document.status != "draft": raise HTTPException(status_code=409, detail="Only draft contracts can be sent")
     terms = json.loads(document.terms_json)
     if not terms.get("client_email"): raise HTTPException(status_code=400, detail="Contract has no client email")
-    send_pdf(terms["client_email"], f"Contract {document.contract_number}", f"{document.contract_number}.pdf", document.pdf_path)
     document.status = "sent"; db.commit()
+    background_tasks.add_task(send_pdf, terms["client_email"], f"Contract {document.contract_number}", f"{document.contract_number}.pdf", document.pdf_path)
     return {"number": document.contract_number, "status": document.status}
 
 
 @app.post("/invoices/{document_id}/send")
-def send_invoice(document_id: int, db: Session = Depends(get_db)) -> dict:
+def send_invoice(document_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)) -> dict:
     document = db.get(Invoice, document_id)
     if not document: raise HTTPException(status_code=404, detail="Invoice not found")
     if document.status != "draft": raise HTTPException(status_code=409, detail="Only draft invoices can be sent")
     if not document.client_email: raise HTTPException(status_code=400, detail="Invoice has no client email")
-    send_pdf(document.client_email, f"Invoice {document.invoice_number}", f"{document.invoice_number}.pdf", document.pdf_path)
     document.status = "sent"; db.commit()
+    background_tasks.add_task(send_pdf, document.client_email, f"Invoice {document.invoice_number}", f"{document.invoice_number}.pdf", document.pdf_path)
     return {"number": document.invoice_number, "status": document.status}
 
 

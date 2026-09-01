@@ -278,6 +278,19 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS) as api: response = await api.get(f"/documents/{context.args[0]}")
     await update.message.reply_text(response.text[:3900] if response.is_success else f"Could not update document: {api_error(response)}")
 
+async def document_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Recovery commands for finding a document after a Telegram/API drop."""
+    if not owner_only(update): return
+    if len(context.args) != 1:
+        await update.message.reply_text("Usage: /document MK-CON-0001"); return
+    async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS, timeout=HTTP_TIMEOUT) as api:
+        response = await api.get(f"/documents/{context.args[0]}")
+    await update.message.reply_text(response.text[:3900] if response.is_success else f"Could not find document: {api_error(response)}")
+
+async def my_documents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not owner_only(update): return
+    await list_documents(update, context)
+
 async def list_documents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not owner_only(update): return
     query = update.callback_query
@@ -336,6 +349,8 @@ def build_application() -> Application:
     app.add_handler(MessageHandler(filters.Regex("(?i)^(confirm|cancel)$"), perform_delete_project))
     app.add_handler(MessageHandler(~filters.TEXT, unsupported_input))
     app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("document", document_lookup))
+    app.add_handler(CommandHandler("my_documents", my_documents))
     app.add_handler(CommandHandler("contracts", list_documents))
     app.add_handler(CommandHandler("invoices", list_documents))
     app.add_handler(CommandHandler("project", project_details))

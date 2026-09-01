@@ -1,8 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 CONTAINER_NAME="scribed"
-IMAGE_NAME="mikesplore/scribed:latest"
+VERSION="${1:?Usage: $0 VERSION (for example 12)}"
+IMAGE_NAME="mikesplore/scribed:${VERSION}"
 NETWORK_NAME="scribed-network"
 PORT="9005"
 
@@ -24,10 +26,18 @@ docker run -d \
   --name "${CONTAINER_NAME}" \
   --network "${NETWORK_NAME}" \
   --restart unless-stopped \
-  --env-file .env \
+  --env-file "${SCRIPT_DIR}/.env" \
   -e "PORT=${PORT}" \
   -p "${PORT}:${PORT}" \
   "${IMAGE_NAME}"
 
-echo "✅ Verifying container..."
-docker exec "${CONTAINER_NAME}" printenv | grep -E '^(PORT|DATABASE_URL|POSTGRES)' || true
+echo "✅ Verifying container health..."
+for attempt in $(seq 1 30); do
+  if curl --fail --silent "http://127.0.0.1:${PORT}/health" >/dev/null; then
+    echo "Health check passed."; exit 0
+  fi
+  sleep 2
+done
+echo "Health check failed; container logs:"
+docker logs "${CONTAINER_NAME}"
+exit 1
