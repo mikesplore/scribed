@@ -36,6 +36,13 @@ def test_project_download_filename_uses_slug():
     assert 'filename="client-portal-invoice.pdf"' in response.headers["content-disposition"]
 
 
+def test_invoice_verification_url_is_not_duplicated():
+    response = generate_invoice(InvoiceRequest(client_name="Ada", project_name="Website", description="Build", amount="500"))
+    from app.render import render_pdf
+    pdf = render_pdf("invoice.html", {**InvoiceRequest(client_name="Ada", project_name="Website", description="Build", amount="500").model_dump(), "invoice_number": "MK-INV-0001"})
+    assert b"scribed.scribed" not in pdf
+
+
 def test_invalid_amount_is_rejected():
     import pytest
     with pytest.raises(ValueError):

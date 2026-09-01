@@ -309,6 +309,9 @@ async def confirm_conversation(update: Update, context: ContextTypes.DEFAULT_TYP
         await target.reply_text("Cancelled. Nothing was created."); return ConversationHandler.END
     all_fields = context.user_data.get("all_fields", context.user_data["fields"])
     data = {field: context.user_data[field] for field in all_fields if field in context.user_data}
+    for field in ("original_amount", "amount_paid"):
+        if field in context.user_data:
+            data[field] = context.user_data[field]
     if context.user_data.get("gatekeeper_project_id"):
         data["gatekeeper_project_id"] = context.user_data["gatekeeper_project_id"]
     context.user_data["idempotency_key"] = context.user_data.get("idempotency_key", str(uuid4()))
