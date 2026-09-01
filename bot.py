@@ -246,6 +246,9 @@ async def begin_project_document(update: Update, context: ContextTypes.DEFAULT_T
         "amount": str(balance) if balance is not None and balance > 0 else None,
         "currency": project.get("currency"),
     }
+    if kind == "invoice" and balance is not None:
+        values["amount_paid"] = str(paid) if paid else None
+        values["original_amount"] = str(balance + paid) if paid else str(balance)
     if kind == "contract":
         values["gatekeeper_project_id"] = project.get("id") or project.get("slug")
     context.user_data.update({key: value for key, value in values.items() if value not in (None, "")})

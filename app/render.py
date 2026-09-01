@@ -18,5 +18,13 @@ environment = Environment(
 def render_pdf(template_name: str, fields: dict[str, Any]) -> bytes:
     """Render a named HTML template to PDF bytes."""
     template = environment.get_template(template_name)
-    html = template.render(**fields)
+    render_fields = dict(fields)
+    # QR generation is optional until the verification asset is configured.
+    render_fields.setdefault("qr_code_data_uri", "")
+    render_fields.setdefault("amount_paid", None)
+    render_fields.setdefault("original_amount", render_fields.get("amount"))
+    render_fields.setdefault("due_date", None)
+    render_fields.setdefault("payment_instructions", None)
+    render_fields.setdefault("client_email", None)
+    html = template.render(**render_fields)
     return HTML(string=html, base_url=str(TEMPLATE_DIR)).write_pdf()
