@@ -91,3 +91,18 @@ def get_invoice(document_id: int, db: Session = Depends(get_db)) -> Response:
     if not document:
         raise HTTPException(status_code=404, detail="Invoice not found")
     return _file_response(document.pdf_path, document.invoice_number)
+
+
+@app.get("/documents/{number}")
+def get_document_status(number: str, db: Session = Depends(get_db)) -> dict:
+    contract = db.query(Contract).filter_by(contract_number=number).first()
+    if contract:
+        return {"type": "contract", "id": contract.id, "number": number,
+                "client_name": contract.client_name, "project_name": contract.project_name,
+                "status": contract.status, "created_at": contract.created_at}
+    invoice = db.query(Invoice).filter_by(invoice_number=number).first()
+    if invoice:
+        return {"type": "invoice", "id": invoice.id, "number": number,
+                "client_name": invoice.client_name, "status": invoice.status,
+                "created_at": invoice.created_at}
+    raise HTTPException(status_code=404, detail="Document not found")
