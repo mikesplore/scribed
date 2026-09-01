@@ -1,6 +1,7 @@
 """Owner-gated Telegram client for Scribed."""
 import os
 import logging
+import re
 import httpx
 from decimal import Decimal, InvalidOperation
 from uuid import uuid4
@@ -10,7 +11,30 @@ from telegram.ext import (Application, CommandHandler, ContextTypes, Conversatio
                           CallbackQueryHandler, MessageHandler, filters)
 
 load_dotenv()
+class SecretRedactionFilter(logging.Filter):
+    """Prevent credentials embedded in URLs or headers from reaching logs."""
+
+    _patterns = (
+        (re.compile(r"(/bot)[^/\s]+", re.IGNORECASE), r"\1[REDACTED]"),
+        (re.compile(r"(Bearer\s+)[^\s,]+", re.IGNORECASE), r"\1[REDACTED]"),
+    )
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        rendered = record.getMessage()
+        for pattern, replacement in self._patterns:
+            rendered = pattern.sub(replacement, rendered)
+        record.msg = rendered
+        record.args = ()
+        return True
+
+
 logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", level=logging.INFO)
+for handler in logging.getLogger().handlers:
+    handler.addFilter(SecretRedactionFilter())
+# These request logs include Telegram's bot token in the URL path. Application
+# errors remain logged above, with secrets redacted by the root handler.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 API_URL = os.getenv("SCRIBED_API_URL", "http://localhost:8000").rstrip("/")
 OWNER_ID = int(os.environ["TELEGRAM_OWNER_ID"])
@@ -25,12 +49,17 @@ def valid_number(value: str) -> bool:
     return bool(__import__("re").fullmatch(r"MK-(?:CON|INV)-\d{4,}", value.strip(), __import__("re").IGNORECASE))
 
 def api_error(response: httpx.Response) -> str:
+    status = f"HTTP {response.status_code}"
     try:
-        detail = response.json().get("detail", "The API returned an error.")
+        body = response.json()
+        detail = body.get("detail") if isinstance(body, dict) else None
     except (ValueError, TypeError):
-        detail = "The API returned an unexpected error."
-    logger.error("Scribed API error: %s %s response=%s", response.request.method, response.request.url, response.status_code)
-    return str(detail)[:300]
+        detail = None
+    if not detail:
+        detail = response.text.strip() or "The API returned an empty error response."
+    logger.error("Scribed API error: %s %s response=%s body=%r", response.request.method,
+                 response.request.url, response.status_code, response.text[:1000])
+    return f"{status}: {str(detail)[:300]}"
 
 async def reply_in_chunks(target, text: str) -> None:
     for start in range(0, len(text), 3900):
