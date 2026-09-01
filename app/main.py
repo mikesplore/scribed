@@ -60,7 +60,11 @@ def generate_contract(request: ContractRequest) -> Response:
 
 
 @app.post("/contracts", response_class=Response)
-def create_contract(request: ContractRequest, db: Session = Depends(get_db)) -> Response:
+def create_contract(request: ContractRequest, db: Session = Depends(get_db), idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> Response:
+    if not isinstance(idempotency_key, str): idempotency_key = None
+    if idempotency_key:
+        existing = db.query(Contract).filter_by(idempotency_key=idempotency_key).first()
+        if existing: return _file_response(existing.pdf_path, existing.contract_number)
     number = next_number(db, "contract", "MK-CON")
     request_data = request.model_dump()
     request_data["contract_number"] = number
@@ -70,7 +74,7 @@ def create_contract(request: ContractRequest, db: Session = Depends(get_db)) -> 
     document = Contract(contract_number=number, client_name=request.client_name, project_name=request.project_name,
                         gatekeeper_project_id=request.gatekeeper_project_id,
                         terms_json=json.dumps(request_data, default=str), pdf_path=str(path),
-                        pdf_hash=hashlib.sha256(pdf).hexdigest())
+                        pdf_hash=hashlib.sha256(pdf).hexdigest(), idempotency_key=idempotency_key)
     db.add(document)
     audit(db, "created", "contract", number)
     db.commit()
@@ -92,7 +96,11 @@ def generate_invoice(request: InvoiceRequest) -> Response:
 
 
 @app.post("/invoices", response_class=Response)
-def create_invoice(request: InvoiceRequest, db: Session = Depends(get_db)) -> Response:
+def create_invoice(request: InvoiceRequest, db: Session = Depends(get_db), idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> Response:
+    if not isinstance(idempotency_key, str): idempotency_key = None
+    if idempotency_key:
+        existing = db.query(Invoice).filter_by(idempotency_key=idempotency_key).first()
+        if existing: return _file_response(existing.pdf_path, existing.invoice_number)
     number = next_number(db, "invoice", "MK-INV")
     request_data = request.model_dump()
     request_data["invoice_number"] = number
@@ -101,7 +109,7 @@ def create_invoice(request: InvoiceRequest, db: Session = Depends(get_db)) -> Re
     path.write_bytes(pdf)
     document = Invoice(invoice_number=number, client_name=request.client_name, amount=request.amount,
                        client_email=request.client_email, currency=request.currency, pdf_path=str(path),
-                       pdf_hash=hashlib.sha256(pdf).hexdigest())
+                       pdf_hash=hashlib.sha256(pdf).hexdigest(), idempotency_key=idempotency_key)
     db.add(document)
     audit(db, "created", "invoice", number)
     db.commit()

@@ -2,6 +2,8 @@
 import os
 import logging
 import httpx
+from decimal import Decimal, InvalidOperation
+from uuid import uuid4
 from dotenv import load_dotenv
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
 from telegram.ext import (Application, CommandHandler, ContextTypes, ConversationHandler,
@@ -13,6 +15,14 @@ logger = logging.getLogger(__name__)
 API_URL = os.getenv("SCRIBED_API_URL", "http://localhost:8000").rstrip("/")
 OWNER_ID = int(os.environ["TELEGRAM_OWNER_ID"])
 API_HEADERS = {"Authorization": f"Bearer {os.environ['SCRIBED_API_TOKEN']}"}
+HTTP_TIMEOUT = httpx.Timeout(20.0)
+
+def valid_amount(value: str) -> bool:
+    try: return Decimal(value.strip()) > 0
+    except (InvalidOperation, ValueError): return False
+
+def valid_number(value: str) -> bool:
+    return bool(__import__("re").fullmatch(r"MK-(?:CON|INV)-\d{4,}", value.strip(), __import__("re").IGNORECASE))
 
 def api_error(response: httpx.Response) -> str:
     try:
@@ -70,6 +80,9 @@ async def begin_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def collect_field(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     fields = context.user_data["fields"]; index = context.user_data["index"]
+    if fields[index] == "amount" and not valid_amount(update.message.text):
+        await update.message.reply_text("Please enter a positive number, e.g. 25000.")
+        return 0
     context.user_data[fields[index]] = update.message.text.strip(); index += 1
     if index < len(fields):
         context.user_data["index"] = index; await update.message.reply_text(FIELD_PROMPTS[fields[index]]); return 0
@@ -81,19 +94,31 @@ async def confirm_conversation(update: Update, context: ContextTypes.DEFAULT_TYP
     if update.message.text.lower() != "confirm":
         await update.message.reply_text("Cancelled. Use /start to begin again."); return ConversationHandler.END
     data = {field: context.user_data[field] for field in context.user_data["fields"]}
+    context.user_data["idempotency_key"] = context.user_data.get("idempotency_key", str(uuid4()))
     if context.user_data["kind"] == "invoice":
         data["description"] = data["description"]
         endpoint, filename = "/invoices", "invoice.pdf"
     else:
         data["deliverables"] = [x.strip() for x in data["deliverables"].split(",") if x.strip()]
         endpoint, filename = "/contracts", "contract.pdf"
-    async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS) as api: response = await api.post(endpoint, json=data)
+    try:
+        async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS, timeout=HTTP_TIMEOUT) as api: response = await api.post(endpoint, json=data, headers={"Idempotency-Key": context.user_data["idempotency_key"]})
+    except httpx.RequestError:
+        logger.exception("Scribed API request failed")
+        await update.message.reply_text("I couldn't reach Scribed. Your request was not confirmed; please reply `confirm` to retry safely.")
+        return 1
     if response.is_success: await update.message.reply_document(InputFile(response.content, filename=filename))
-    else: await update.message.reply_text(f"Could not create document: {api_error(response)}")
+    else:
+        await update.message.reply_text(f"Could not create document: {api_error(response)}\nPlease correct the value and reply `confirm` to retry, or `/cancel`.")
+        return 1
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear(); await update.message.reply_text("Cancelled. Use /start when you are ready."); return ConversationHandler.END
+
+async def unsupported_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if owner_only(update) and update.effective_message:
+        await update.effective_message.reply_text("Please send text only. Files and other message types are not supported.")
 
 async def delete_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not owner_only(update): return
@@ -223,8 +248,10 @@ async def new_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if len(values) != 4:
         await update.message.reply_text("Usage: /newinvoice Client|Project|Description|Amount"); return
     client, project, description, amount = (value.strip() for value in values)
-    async with httpx.AsyncClient(base_url=API_URL) as api:
-        response = await api.post("/invoices", json={"client_name": client, "project_name": project, "description": description, "amount": amount})
+    if not valid_amount(amount):
+        await update.message.reply_text("Amount must be a positive number."); return
+    async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS, timeout=HTTP_TIMEOUT) as api:
+        response = await api.post("/invoices", json={"client_name": client, "project_name": project, "description": description, "amount": amount}, headers={"Idempotency-Key": str(uuid4())})
     if response.is_success:
         await update.message.reply_document(InputFile(response.content, filename="invoice.pdf"))
     else: await update.message.reply_text(f"Could not create invoice: {api_error(response)}")
@@ -235,8 +262,10 @@ async def new_contract(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if len(values) != 7:
         await update.message.reply_text("Usage: /newcontract Client|Project|Scope|Deliverables, comma separated|Timeline|Amount|Payment schedule"); return
     client, project, scope, deliverables, timeline, amount, schedule = (value.strip() for value in values)
+    if not valid_amount(amount):
+        await update.message.reply_text("Amount must be a positive number."); return
     payload = {"client_name": client, "project_name": project, "scope": scope, "deliverables": [x.strip() for x in deliverables.split(",") if x.strip()], "timeline": timeline, "amount": amount, "payment_schedule": schedule}
-    async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS) as api: response = await api.post("/contracts", json=payload)
+    async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS, timeout=HTTP_TIMEOUT) as api: response = await api.post("/contracts", json=payload, headers={"Idempotency-Key": str(uuid4())})
     if response.is_success: await update.message.reply_document(InputFile(response.content, filename="contract.pdf"))
     else: await update.message.reply_text(f"Could not create contract: {api_error(response)}")
 
@@ -244,6 +273,8 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not owner_only(update): return
     if len(context.args) != 1:
         await update.message.reply_text("Usage: /status MK-CON-0001"); return
+    if not valid_number(context.args[0]):
+        await update.message.reply_text("Document number must look like MK-CON-0001 or MK-INV-0001."); return
     async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS) as api: response = await api.get(f"/documents/{context.args[0]}")
     await update.message.reply_text(response.text[:3900] if response.is_success else f"Could not update document: {api_error(response)}")
 
@@ -267,6 +298,8 @@ async def transition(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not owner_only(update) or len(context.args) != 1:
         await update.message.reply_text("Usage: /send, /accepted, or /paid NUMBER"); return
     number = context.args[0]
+    if not valid_number(number):
+        await update.message.reply_text("Document number must look like MK-CON-0001 or MK-INV-0001."); return
     async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS) as api:
         info = await api.get(f"/documents/{number}")
         if not info.is_success:
@@ -296,11 +329,12 @@ def build_application() -> Application:
     app.add_handler(CallbackQueryHandler(delete_project_menu, pattern="^projects$"))
     app.add_handler(CallbackQueryHandler(confirm_delete_contract, pattern="^delete_contract:"))
     app.add_handler(CallbackQueryHandler(confirm_delete_project, pattern="^delete_project:"))
+    # Conversations must receive confirm/cancel before the document-deletion
+    # handlers below; otherwise those handlers swallow invoice confirmations.
+    app.add_handler(conversation)
     app.add_handler(MessageHandler(filters.Regex("(?i)^(confirm|cancel)$"), perform_delete_contract))
     app.add_handler(MessageHandler(filters.Regex("(?i)^(confirm|cancel)$"), perform_delete_project))
-    app.add_handler(conversation)
-    app.add_handler(CommandHandler("newinvoice", new_invoice))
-    app.add_handler(CommandHandler("newcontract", new_contract))
+    app.add_handler(MessageHandler(~filters.TEXT, unsupported_input))
     app.add_handler(CommandHandler("status", status))
     app.add_handler(CommandHandler("contracts", list_documents))
     app.add_handler(CommandHandler("invoices", list_documents))

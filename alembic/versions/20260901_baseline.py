@@ -24,8 +24,8 @@ def upgrade() -> None:
     # Bring databases created by the pre-Alembic create_all() implementation
     # up to the current schema as part of the baseline migration.
     for table, columns in {
-        "contracts": [("gatekeeper_project_id", sa.String(64)), ("pdf_hash", sa.String(64)), ("accepted_at", sa.DateTime), ("archived_at", sa.DateTime)],
-        "invoices": [("client_email", sa.String(255)), ("pdf_hash", sa.String(64)), ("paid_at", sa.DateTime), ("archived_at", sa.DateTime)],
+        "contracts": [("gatekeeper_project_id", sa.String(64)), ("pdf_hash", sa.String(64)), ("accepted_at", sa.DateTime), ("archived_at", sa.DateTime), ("idempotency_key", sa.String(128))],
+        "invoices": [("client_email", sa.String(255)), ("pdf_hash", sa.String(64)), ("paid_at", sa.DateTime), ("archived_at", sa.DateTime), ("idempotency_key", sa.String(128))],
     }.items():
         present = {column["name"] for column in sa.inspect(bind).get_columns(table)}
         for name, type_ in columns:

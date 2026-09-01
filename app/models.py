@@ -20,6 +20,7 @@ class Contract(Base):
     pdf_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True)
 
 
 class DocumentSequence(Base):
@@ -42,6 +43,7 @@ class Invoice(Base):
     pdf_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True)
 
 
 class AuditLog(Base):
