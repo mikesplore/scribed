@@ -35,6 +35,12 @@ def audit(db, action: str, kind: str, number: str, detail: str | None = None):
 def fingerprint(payload: dict) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
 
+def pdf_filename(project_id: str | None, project_name: str, kind: str) -> str:
+    """Build a safe, human-friendly download name from the project slug."""
+    raw = project_id or project_name
+    slug = "-".join("".join(char.lower() if char.isalnum() else "-" for char in raw).split("-"))
+    return f"{slug or 'mikesplore'}-{kind}.pdf"
+
 @app.middleware("http")
 async def require_api_token(request: Request, call_next):
     if request.headers.get("content-length") and int(request.headers["content-length"]) > MAX_BODY:
@@ -68,7 +74,8 @@ def health() -> dict[str, str]:
 @app.post("/generate/contract", response_class=Response)
 def generate_contract(request: ContractRequest) -> Response:
     pdf = render_pdf("contract.html", request.model_dump())
-    return Response(content=pdf, media_type="application/pdf")
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="{pdf_filename(request.gatekeeper_project_id, request.project_name, "contract")}"'})
 
 
 @app.post("/contracts", response_class=Response)
@@ -98,7 +105,7 @@ def create_contract(request: ContractRequest, db: Session = Depends(get_db), ide
     return Response(
         content=pdf,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="{number}.pdf"'},
+        headers={"Content-Disposition": f'inline; filename="{pdf_filename(request.gatekeeper_project_id, request.project_name, "contract")}"'},
     )
 
 
@@ -108,7 +115,7 @@ def generate_invoice(request: InvoiceRequest) -> Response:
     return Response(
         content=pdf,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="{request.invoice_number}.pdf"'},
+        headers={"Content-Disposition": f'inline; filename="{pdf_filename(request.gatekeeper_project_id, request.project_name, "invoice")}"'},
     )
 
 
@@ -137,7 +144,7 @@ def create_invoice(request: InvoiceRequest, db: Session = Depends(get_db), idemp
     document.pdf_path = upload_pdf(location, pdf)
     db.commit()
     return Response(content=pdf, media_type="application/pdf",
-                    headers={"Content-Disposition": f'inline; filename="{number}.pdf"'})
+                    headers={"Content-Disposition": f'inline; filename="{pdf_filename(request.gatekeeper_project_id, request.project_name, "invoice")}"'})
 
 
 @app.post("/contracts/{document_id}/duplicate", response_class=Response)

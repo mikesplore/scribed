@@ -78,6 +78,10 @@ def api_error(response: httpx.Response) -> str:
                  response.request.url, response.status_code, response.text[:1000])
     return f"{status}: {str(detail)[:300]}"
 
+def response_filename(response: httpx.Response, fallback: str) -> str:
+    match = re.search(r'filename="?([^";]+)', response.headers.get("content-disposition", ""), re.IGNORECASE)
+    return match.group(1) if match else fallback
+
 async def reply_in_chunks(target, text: str) -> None:
     for start in range(0, len(text), 3900):
         await target.reply_text(text[start:start + 3900])
@@ -304,7 +308,7 @@ async def confirm_conversation(update: Update, context: ContextTypes.DEFAULT_TYP
         logger.exception("Scribed API request failed")
         await target.reply_text("I couldn't reach Scribed. Nothing was created—tap Create to retry safely.")
         return 1
-    if response.is_success: await target.reply_document(InputFile(response.content, filename=filename), caption="Done — your document is ready.")
+    if response.is_success: await target.reply_document(InputFile(response.content, filename=response_filename(response, filename)), caption="Done — your document is ready.")
     else:
         await target.reply_text(f"I hit a snag while creating it: {api_error(response)}\nNothing was created. You can tap Create to retry or /cancel.")
         return 1
