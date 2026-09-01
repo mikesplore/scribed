@@ -30,7 +30,7 @@ async def begin_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not owner_only(update): return ConversationHandler.END
     query = update.callback_query
     if query: await query.answer()
-    kind = (query.data if query else update.message.text).replace("new_", "")
+    kind = query.data.replace("new_", "") if query else update.message.text.split()[0].lstrip("/").replace("new", "", 1)
     context.user_data.clear(); context.user_data["kind"] = kind; context.user_data["fields"] = INVOICE_FIELDS if kind == "invoice" else CONTRACT_FIELDS; context.user_data["index"] = 0
     target = query.message if query else update.message
     await target.reply_text(f"Creating a {kind}. Type /cancel at any time.\n\n{FIELD_PROMPTS[context.user_data['fields'][0]]}")
