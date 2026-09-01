@@ -9,6 +9,8 @@ cp .env.example .env
 .venv/bin/uvicorn app.main:app --reload
 ```
 
+Scribed loads variables from `.env` automatically. Do not commit `.env`.
+
 Then open `http://localhost:8000/docs` and use `POST /contracts` or `POST /invoices`. The default SQLite database and `storage/` directory are created automatically.
 
 For the Telegram bot, set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_OWNER_ID` in `.env`, then run:

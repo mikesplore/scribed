@@ -1,9 +1,11 @@
 """Owner-gated Telegram client for Scribed."""
 import os
 import httpx
+from dotenv import load_dotenv
 from telegram import InputFile, Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
+load_dotenv()
 API_URL = os.getenv("SCRIBED_API_URL", "http://localhost:8000").rstrip("/")
 OWNER_ID = int(os.environ["TELEGRAM_OWNER_ID"])
 

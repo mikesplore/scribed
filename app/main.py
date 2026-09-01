@@ -6,10 +6,13 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
+from dotenv import load_dotenv
 
 from .db import get_db, init_db, next_number, storage_path
 from .models import Contract, Invoice
 from .mailer import send_pdf
+
+load_dotenv()
 from .render import render_pdf
 from .schemas import ContractRequest, InvoiceRequest
 
