@@ -95,14 +95,18 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def list_documents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not owner_only(update): return
-    kind = "contracts" if update.message.text.split()[0].lstrip("/") == "contracts" else "invoices"
+    query = update.callback_query
+    if query: await query.answer()
+    source = query.data if query else update.message.text.split()[0].lstrip("/")
+    kind = "contracts" if "contracts" in source else "invoices"
     async with httpx.AsyncClient(base_url=API_URL) as api: response = await api.get(f"/{kind}")
+    target = query.message if query else update.message
     if not response.is_success:
-        await update.message.reply_text(response.text); return
+        await target.reply_text(response.text); return
     documents = response.json()
     if not documents:
-        await update.message.reply_text(f"No {kind} found."); return
-    await update.message.reply_text("\n".join(f"{x['number']} — {x['client_name']} — {x['status']}" for x in documents))
+        await target.reply_text(f"No {kind} found."); return
+    await target.reply_text("\n".join(f"{x['number']} — {x['client_name']} — {x['status']}" for x in documents))
 
 async def transition(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not owner_only(update) or len(context.args) != 1:
@@ -134,6 +138,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("status", status))
     app.add_handler(CommandHandler("contracts", list_documents))
     app.add_handler(CommandHandler("invoices", list_documents))
+    app.add_handler(CallbackQueryHandler(list_documents, pattern="^list_(contracts|invoices)$"))
     app.add_handler(CommandHandler("send", transition))
     app.add_handler(CommandHandler("accepted", transition))
     app.add_handler(CommandHandler("paid", transition))
