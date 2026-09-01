@@ -166,7 +166,7 @@ def contract_by_project(gatekeeper_project_id: str, db: Session = Depends(get_db
 
 @app.post("/integrations/gatekeeper/suspensions")
 def record_gatekeeper_suspension(payload: dict, db: Session = Depends(get_db), x_gatekeeper_secret: str | None = Header(default=None)) -> dict:
-    expected = os.getenv("GATEKEEPER_INTEGRATION_SECRET")
+    expected = os.getenv("SCRIBED_INTEGRATION_SECRET")
     if not expected or x_gatekeeper_secret != expected: raise HTTPException(status_code=401, detail="Invalid integration secret")
     project_id = str(payload.get("project_id", ""))
     document = db.query(Contract).filter_by(gatekeeper_project_id=project_id).order_by(Contract.created_at.desc()).first()
