@@ -17,6 +17,8 @@ For the Telegram bot, set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_OWNER_ID` in `.env`
 .venv/bin/python bot.py
 ```
 
+Document email delivery uses Resend. Set `RESEND_API_KEY` and `RESEND_FROM_EMAIL` before using the `/send` endpoints or Telegram `/send` command.
+
 Run automated checks with:
 
 ```bash
