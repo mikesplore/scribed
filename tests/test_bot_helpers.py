@@ -10,4 +10,4 @@ def test_payment_summary_uses_successful_payments_only():
          {"status": "pending", "amount": "5000"}],
     )
     assert paid == Decimal("25000")
-    assert balance == Decimal("75000")
+    assert balance == Decimal("100000")

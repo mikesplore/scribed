@@ -63,7 +63,9 @@ def payment_summary(project: dict, payments: list[dict]) -> tuple[Decimal | None
                 paid += Decimal(str(payment.get("amount", 0)))
             except (InvalidOperation, ValueError):
                 continue
-    return paid, (due - paid if due is not None else None)
+    # Gatekeeper's amountDue is already the remaining balance. Payments are
+    # displayed separately and must not be subtracted a second time.
+    return paid, due
 
 def api_error(response: httpx.Response) -> str:
     status = f"HTTP {response.status_code}"
