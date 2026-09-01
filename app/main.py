@@ -1,6 +1,8 @@
 import json
 import hashlib
 import os
+import time
+from collections import defaultdict, deque
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -10,7 +12,7 @@ from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
 from .db import get_db, init_db, next_number, storage_path
-from .models import Contract, Invoice
+from .models import AuditLog, Contract, Invoice
 from .mailer import send_pdf
 
 load_dotenv()
@@ -19,6 +21,10 @@ from .schemas import ContractRequest, InvoiceRequest
 
 app = FastAPI(title="Scribed", description="mikesplore contract and invoice PDF generation")
 init_db()
+_requests: dict[str, deque[float]] = defaultdict(deque)
+
+def audit(db, action: str, kind: str, number: str, detail: str | None = None):
+    db.add(AuditLog(action=action, document_type=kind, document_number=number, detail=detail))
 
 @app.middleware("http")
 async def require_api_token(request: Request, call_next):
@@ -28,6 +34,12 @@ async def require_api_token(request: Request, call_next):
         return await call_next(request)
     if not expected or request.headers.get("authorization") != f"Bearer {expected}":
         return Response(content='{"detail":"Authentication required"}', status_code=401, media_type="application/json")
+    key = request.client.host if request.client else "unknown"
+    now = time.monotonic(); window = _requests[key]
+    while window and now - window[0] > 60: window.popleft()
+    if len(window) >= 60:
+        return Response(content='{"detail":"Rate limit exceeded"}', status_code=429, media_type="application/json")
+    window.append(now)
     return await call_next(request)
 
 
@@ -55,6 +67,7 @@ def create_contract(request: ContractRequest, db: Session = Depends(get_db)) -> 
                         terms_json=json.dumps(request_data, default=str), pdf_path=str(path),
                         pdf_hash=hashlib.sha256(pdf).hexdigest())
     db.add(document)
+    audit(db, "created", "contract", number)
     db.commit()
     return Response(
         content=pdf,
@@ -85,6 +98,7 @@ def create_invoice(request: InvoiceRequest, db: Session = Depends(get_db)) -> Re
                        client_email=request.client_email, currency=request.currency, pdf_path=str(path),
                        pdf_hash=hashlib.sha256(pdf).hexdigest())
     db.add(document)
+    audit(db, "created", "invoice", number)
     db.commit()
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f'inline; filename="{number}.pdf"'})
@@ -132,18 +146,26 @@ def get_document_status(number: str, db: Session = Depends(get_db)) -> dict:
 def list_contracts(db: Session = Depends(get_db)) -> list[dict]:
     return [{"id": item.id, "number": item.contract_number, "client_name": item.client_name,
              "project_name": item.project_name, "status": item.status, "created_at": item.created_at}
-            for item in db.query(Contract).order_by(Contract.created_at.desc()).all()]
+            for item in db.query(Contract).filter_by(archived_at=None).order_by(Contract.created_at.desc()).all()]
 
 
 @app.delete("/contracts/{document_id}")
 def delete_contract(document_id: int, db: Session = Depends(get_db)) -> dict:
     document = db.get(Contract, document_id)
     if not document: raise HTTPException(status_code=404, detail="Contract not found")
-    if document.status != "draft": raise HTTPException(status_code=409, detail="Only draft contracts can be deleted")
+    if document.archived_at: raise HTTPException(status_code=409, detail="Contract is already archived")
+    document.archived_at = datetime.now(timezone.utc); audit(db, "archived", "contract", document.contract_number); db.commit()
+    return {"archived": True, "number": document.contract_number}
+
+
+@app.delete("/contracts/{document_id}/permanent")
+def permanently_delete_contract(document_id: int, db: Session = Depends(get_db)) -> dict:
+    document = db.get(Contract, document_id)
+    if not document: raise HTTPException(status_code=404, detail="Contract not found")
+    if not document.archived_at: raise HTTPException(status_code=409, detail="Archive the contract before permanent deletion")
     path = Path(document.pdf_path)
     if path.is_file(): path.unlink()
-    number = document.contract_number
-    db.delete(document); db.commit()
+    number = document.contract_number; audit(db, "permanently_deleted", "contract", number); db.delete(document); db.commit()
     return {"deleted": True, "number": number}
 
 
@@ -151,7 +173,14 @@ def delete_contract(document_id: int, db: Session = Depends(get_db)) -> dict:
 def list_invoices(db: Session = Depends(get_db)) -> list[dict]:
     return [{"id": item.id, "number": item.invoice_number, "client_name": item.client_name,
              "status": item.status, "created_at": item.created_at}
-            for item in db.query(Invoice).order_by(Invoice.created_at.desc()).all()]
+            for item in db.query(Invoice).filter_by(archived_at=None).order_by(Invoice.created_at.desc()).all()]
+
+
+@app.get("/audit/{number}")
+def document_audit(number: str, db: Session = Depends(get_db)) -> list[dict]:
+    return [{"action": item.action, "type": item.document_type, "number": item.document_number,
+             "detail": item.detail, "created_at": item.created_at}
+            for item in db.query(AuditLog).filter_by(document_number=number).order_by(AuditLog.created_at.asc()).all()]
 
 
 @app.get("/contracts/by-project/{gatekeeper_project_id}")

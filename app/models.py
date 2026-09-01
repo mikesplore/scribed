@@ -19,6 +19,7 @@ class Contract(Base):
     pdf_path: Mapped[str] = mapped_column(Text)
     pdf_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class DocumentSequence(Base):
@@ -40,3 +41,14 @@ class Invoice(Base):
     pdf_path: Mapped[str] = mapped_column(Text)
     pdf_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    action: Mapped[str] = mapped_column(String(40))
+    document_type: Mapped[str] = mapped_column(String(20))
+    document_number: Mapped[str] = mapped_column(String(50))
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
