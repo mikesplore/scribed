@@ -30,7 +30,7 @@ def audit(db, action: str, kind: str, number: str, detail: str | None = None):
 async def require_api_token(request: Request, call_next):
     path = request.url.path
     expected = os.getenv("SCRIBED_API_TOKEN", "").strip()
-    if path == "/health" or path.startswith("/verify/"):
+    if path in {"/health", "/docs", "/redoc", "/openapi.json"} or path.startswith("/verify/"):
         return await call_next(request)
     if not expected or request.headers.get("authorization") != f"Bearer {expected}":
         return Response(content='{"detail":"Authentication required"}', status_code=401, media_type="application/json")
