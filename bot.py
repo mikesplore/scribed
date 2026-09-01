@@ -104,13 +104,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/help — show this help"
     )
 
-INVOICE_FIELDS = ["client_name", "project_name", "description", "amount"]
-CONTRACT_FIELDS = ["client_name", "project_name", "scope", "deliverables", "timeline", "amount", "payment_schedule"]
-FIELD_PROMPTS = {"client_name": "What is the client name?", "project_name": "What is the project name?", "description": "Describe the invoice item.", "scope": "Describe the scope of work.", "deliverables": "List the deliverables, separated by commas.", "timeline": "What is the timeline?", "amount": "What is the total amount in KES?", "payment_schedule": "What are the payment terms?"}
+INVOICE_FIELDS = ["client_name", "client_email", "project_name", "description", "amount"]
+CONTRACT_FIELDS = ["client_name", "client_email", "project_name", "scope", "deliverables", "timeline", "amount", "payment_schedule"]
+FIELD_PROMPTS = {"client_name": "What is the client name?", "client_email": "What is the client email?", "project_name": "What is the project name?", "description": "Describe the invoice item.", "scope": "Describe the scope of work.", "deliverables": "List the deliverables, separated by commas.", "timeline": "What is the timeline?", "amount": "What is the total amount in KES?", "payment_schedule": "What are the payment terms?"}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not owner_only(update): return
-    keyboard = [[InlineKeyboardButton("Create contract", callback_data="new_contract"), InlineKeyboardButton("Create invoice", callback_data="choose_invoice")],
+    keyboard = [[InlineKeyboardButton("Create contract", callback_data="choose_contract"), InlineKeyboardButton("Create invoice", callback_data="choose_invoice")],
                 [InlineKeyboardButton("List contracts", callback_data="list_contracts"), InlineKeyboardButton("List invoices", callback_data="list_invoices")],
                 [InlineKeyboardButton("Gatekeeper projects", callback_data="projects")],
                 [InlineKeyboardButton("Delete document", callback_data="delete_menu")]]
@@ -124,6 +124,28 @@ async def choose_invoice_source(update: Update, context: ContextTypes.DEFAULT_TY
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("From scratch", callback_data="new_invoice_scratch")],
             [InlineKeyboardButton("Use a Gatekeeper project", callback_data="invoice_projects")],
+        ]),
+    )
+
+async def choose_contract_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not owner_only(update): return
+    await update.callback_query.answer()
+    await update.callback_query.message.reply_text(
+        "How would you like to start the contract?",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("From scratch", callback_data="new_contract_scratch")],
+            [InlineKeyboardButton("Use a Gatekeeper project", callback_data="contract_projects")],
+        ]),
+    )
+
+async def choose_contract_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not owner_only(update): return
+    await update.callback_query.answer()
+    await update.callback_query.message.reply_text(
+        "How would you like to start the contract?",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("From scratch", callback_data="new_contract_scratch")],
+            [InlineKeyboardButton("Use a Gatekeeper project", callback_data="contract_projects")],
         ]),
     )
 
@@ -147,8 +169,9 @@ async def invoice_project_menu(update: Update, context: ContextTypes.DEFAULT_TYP
     if not response.is_success:
         await query.message.reply_text(f"Could not load Gatekeeper projects: {api_error(response)}"); return
     items = response.json()
-    keyboard = [[InlineKeyboardButton(f"{x.get('name', x.get('slug', 'Project'))}", callback_data=f"project_document:invoice:{x['slug']}")] for x in items]
-    await query.message.reply_text("Choose a project for the invoice:", reply_markup=InlineKeyboardMarkup(keyboard or [[InlineKeyboardButton("No projects found", callback_data="noop")]]))
+    kind = "contract" if query.data == "contract_projects" else "invoice"
+    keyboard = [[InlineKeyboardButton(f"{x.get('name', x.get('slug', 'Project'))}", callback_data=f"project_document:{kind}:{x['slug']}")] for x in items]
+    await query.message.reply_text(f"Choose a project for the {kind}:", reply_markup=InlineKeyboardMarkup(keyboard or [[InlineKeyboardButton("No projects found", callback_data="noop")]]))
 
 async def begin_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not owner_only(update): return ConversationHandler.END
@@ -166,6 +189,14 @@ async def begin_invoice_scratch(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data.clear()
     context.user_data.update({"kind": "invoice", "fields": INVOICE_FIELDS, "index": 0})
     await query.message.reply_text("Starting a fresh invoice. Type /cancel at any time.\n\nWhat is the client name?")
+    return 0
+
+async def begin_contract_scratch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    context.user_data.clear()
+    context.user_data.update({"kind": "contract", "fields": CONTRACT_FIELDS, "index": 0})
+    await query.message.reply_text("Starting a fresh contract. Type /cancel at any time.\n\nWhat is the client name?")
     return 0
 
 async def begin_project_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -193,8 +224,10 @@ async def begin_project_document(update: Update, context: ContextTypes.DEFAULT_T
     context.user_data.update({"kind": kind, "fields": INVOICE_FIELDS if kind == "invoice" else CONTRACT_FIELDS, "index": 0})
     values = {
         "client_name": project.get("clientName") or project.get("client_name"),
+        "client_email": project.get("clientEmail") or project.get("client_email") or project.get("email"),
         "project_name": project.get("name") or project.get("projectName") or project.get("project_name"),
         "amount": project.get("amountDue") or project.get("amount_due"),
+        "currency": project.get("currency"),
     }
     if kind == "contract":
         values["gatekeeper_project_id"] = project.get("id") or project.get("slug")
@@ -564,6 +597,7 @@ def build_application() -> Application:
         entry_points=[CommandHandler("newinvoice", begin_conversation), CommandHandler("newcontract", begin_conversation),
                       CallbackQueryHandler(begin_conversation, pattern="^new_(invoice|contract)$"),
                       CallbackQueryHandler(begin_invoice_scratch, pattern="^new_invoice_scratch$"),
+                      CallbackQueryHandler(begin_contract_scratch, pattern="^new_contract_scratch$"),
                       CallbackQueryHandler(begin_project_document, pattern="^project_document:(invoice|contract):")],
         states={0: [MessageHandler(filters.TEXT & ~filters.COMMAND, collect_field)],
                 1: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_conversation),
@@ -574,7 +608,8 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(delete_menu, pattern="^delete_menu$"))
     app.add_handler(CallbackQueryHandler(choose_invoice_source, pattern="^choose_invoice$"))
-    app.add_handler(CallbackQueryHandler(invoice_project_menu, pattern="^invoice_projects$"))
+    app.add_handler(CallbackQueryHandler(choose_contract_source, pattern="^choose_contract$"))
+    app.add_handler(CallbackQueryHandler(invoice_project_menu, pattern="^(invoice|contract)_projects$"))
     app.add_handler(CallbackQueryHandler(delete_contract_menu, pattern="^delete_contracts$"))
     app.add_handler(CallbackQueryHandler(delete_project_menu, pattern="^delete_projects$"))
     app.add_handler(CallbackQueryHandler(project_details, pattern="^projects:|^project:"))
