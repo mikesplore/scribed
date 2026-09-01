@@ -110,11 +110,22 @@ FIELD_PROMPTS = {"client_name": "What is the client name?", "project_name": "Wha
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not owner_only(update): return
-    keyboard = [[InlineKeyboardButton("Create contract", callback_data="new_contract"), InlineKeyboardButton("Create invoice", callback_data="new_invoice")],
+    keyboard = [[InlineKeyboardButton("Create contract", callback_data="new_contract"), InlineKeyboardButton("Create invoice", callback_data="choose_invoice")],
                 [InlineKeyboardButton("List contracts", callback_data="list_contracts"), InlineKeyboardButton("List invoices", callback_data="list_invoices")],
                 [InlineKeyboardButton("Gatekeeper projects", callback_data="projects")],
                 [InlineKeyboardButton("Delete document", callback_data="delete_menu")]]
     await update.message.reply_text("Welcome to Scribed 👋\n\nWhat would you like to do?", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def choose_invoice_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not owner_only(update): return
+    await update.callback_query.answer()
+    await update.callback_query.message.reply_text(
+        "How would you like to start the invoice?",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("From scratch", callback_data="new_invoice_scratch")],
+            [InlineKeyboardButton("Use a Gatekeeper project", callback_data="projects")],
+        ]),
+    )
 
 async def begin_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not owner_only(update): return ConversationHandler.END
@@ -124,6 +135,14 @@ async def begin_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data.clear(); context.user_data["kind"] = kind; context.user_data["fields"] = INVOICE_FIELDS if kind == "invoice" else CONTRACT_FIELDS; context.user_data["index"] = 0
     target = query.message if query else update.message
     await target.reply_text(f"Creating a {kind}. Type /cancel at any time.\n\n{FIELD_PROMPTS[context.user_data['fields'][0]]}")
+    return 0
+
+async def begin_invoice_scratch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    context.user_data.clear()
+    context.user_data.update({"kind": "invoice", "fields": INVOICE_FIELDS, "index": 0})
+    await query.message.reply_text("Starting a fresh invoice. Type /cancel at any time.\n\nWhat is the client name?")
     return 0
 
 async def begin_project_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -506,7 +525,8 @@ def build_application() -> Application:
     app = Application.builder().token(os.environ["TELEGRAM_BOT_TOKEN"]).post_init(set_command_menu).build()
     conversation = ConversationHandler(
         entry_points=[CommandHandler("newinvoice", begin_conversation), CommandHandler("newcontract", begin_conversation),
-                      CallbackQueryHandler(begin_conversation, pattern="^new_(invoice|contract)$")],
+                      CallbackQueryHandler(begin_conversation, pattern="^new_(invoice|contract)$"),
+                      CallbackQueryHandler(begin_invoice_scratch, pattern="^new_invoice_scratch$")],
         states={0: [MessageHandler(filters.TEXT & ~filters.COMMAND, collect_field)],
                 1: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_conversation),
                     CallbackQueryHandler(confirm_conversation, pattern="^create_(confirm|edit|cancel)$")]},
@@ -515,6 +535,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(delete_menu, pattern="^delete_menu$"))
+    app.add_handler(CallbackQueryHandler(choose_invoice_source, pattern="^choose_invoice$"))
     app.add_handler(CallbackQueryHandler(delete_contract_menu, pattern="^delete_contracts$"))
     app.add_handler(CallbackQueryHandler(delete_project_menu, pattern="^delete_projects$"))
     app.add_handler(CallbackQueryHandler(project_details, pattern="^projects:|^project:"))
