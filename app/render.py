@@ -38,6 +38,8 @@ def render_pdf(template_name: str, fields: dict[str, Any]) -> bytes:
     render_fields.setdefault("from_tax_id", None)
     render_fields.setdefault("from_name", "mikesplore")
     render_fields.setdefault("from_tagline", "Independent digital work")
+    client_name = str(render_fields.get("client_name", "")).strip()
+    render_fields.setdefault("client_first_name", client_name.split()[0] if client_name else "Client")
     render_fields.setdefault("items", None)
     render_fields.setdefault("invoice_notes", None)
     for field in ("issue_date", "due_date"):

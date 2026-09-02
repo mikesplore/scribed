@@ -19,6 +19,7 @@
   }
 
   @page { size: A4; margin: 24mm 20mm 35mm 20mm; }
+  @page { @bottom-right { content: counter(page) " of " counter(pages); font: 8pt var(--font-mono); color: var(--muted); } }
   * { box-sizing: border-box; }
 
   body{
@@ -150,8 +151,7 @@
   }
   .verify-left{ display:flex; align-items:center; gap:8px; }
   .verify-left img{ width:34px; height:34px; }
-  .page-number{ min-width:60px; text-align:right; }
-  .page-number::after{ content: counter(page) " of " counter(pages); }
+  .page-number{ display:none; }
 </style>
 </head>
 <body>
