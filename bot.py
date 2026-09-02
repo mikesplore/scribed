@@ -71,11 +71,13 @@ def api_error(response: httpx.Response) -> str:
     status = f"HTTP {response.status_code}"
     try:
         body = response.json()
-        detail = body.get("detail") if isinstance(body, dict) else None
+        detail = None
+        if isinstance(body, dict):
+            detail = body.get("detail") or body.get("message") or body.get("error")
     except (ValueError, TypeError):
         detail = None
     if not detail:
-        detail = response.text.strip() or "The API returned an empty error response."
+        detail = "The service returned an unexpected response."
     logger.error("Scribed API error: %s %s response=%s body=%r", response.request.method,
                  response.request.url, response.status_code, response.text[:1000])
     return f"{status}: {str(detail)[:300]}"
@@ -83,6 +85,23 @@ def api_error(response: httpx.Response) -> str:
 def response_filename(response: httpx.Response, fallback: str) -> str:
     match = re.search(r'filename="?([^";]+)', response.headers.get("content-disposition", ""), re.IGNORECASE)
     return match.group(1) if match else fallback
+
+def friendly_json(response: httpx.Response, action: str = "updated") -> str:
+    try:
+        body = response.json()
+    except (ValueError, TypeError):
+        return "The request completed, but the service returned an unexpected response."
+    if not isinstance(body, dict):
+        return "The request completed successfully."
+    number = body.get("number", "the document")
+    status = body.get("status")
+    if status:
+        return f"{number} is now {status}."
+    if action == "archived":
+        return f"{number} has been archived."
+    if action == "deleted":
+        return f"{number} was deleted."
+    return f"{number} was {action}."
 
 async def reply_in_chunks(target, text: str) -> None:
     for start in range(0, len(text), 3900):
@@ -316,6 +335,8 @@ async def confirm_conversation(update: Update, context: ContextTypes.DEFAULT_TYP
             data[field] = context.user_data[field]
     if "payments" in context.user_data:
         data["payments"] = context.user_data["payments"]
+    if "payment_portal_url" in context.user_data:
+        data["payment_portal_url"] = context.user_data["payment_portal_url"]
     if context.user_data.get("gatekeeper_project_id"):
         data["gatekeeper_project_id"] = context.user_data["gatekeeper_project_id"]
     context.user_data["idempotency_key"] = context.user_data.get("idempotency_key", str(uuid4()))
@@ -516,7 +537,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not valid_number(context.args[0]):
         await update.message.reply_text("Document number must look like MK-CON-0001 or MK-INV-0001."); return
     async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS) as api: response = await api.get(f"/documents/{context.args[0]}")
-    await update.message.reply_text(response.text[:3900] if response.is_success else f"Could not update document: {api_error(response)}")
+    await update.message.reply_text(friendly_json(response, "updated") if response.is_success else f"Could not update document: {api_error(response)}")
 
 async def document_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Recovery commands for finding a document after a Telegram/API drop."""
@@ -525,7 +546,7 @@ async def document_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text("Usage: /document MK-CON-0001"); return
     async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS, timeout=HTTP_TIMEOUT) as api:
         response = await api.get(f"/documents/{context.args[0]}")
-    await update.message.reply_text(response.text[:3900] if response.is_success else f"Could not find document: {api_error(response)}")
+    await update.message.reply_text(friendly_json(response, "found") if response.is_success else f"Could not find document: {api_error(response)}")
 
 async def duplicate_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     target = update.effective_message
@@ -633,7 +654,7 @@ async def document_action(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if action in {"duplicate", "send"} and response.headers.get("content-type", "").startswith("application/pdf"):
         await query.message.reply_document(InputFile(response.content, filename=f"{action}.pdf"), caption="Done.")
     else:
-        await query.message.reply_text("Done — " + response.text[:500])
+        await query.message.reply_text(friendly_json(response, "completed"))
 
 async def transition(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not owner_only(update) or len(context.args) != 1:
@@ -649,7 +670,7 @@ async def transition(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         action = update.message.text.split()[0].lstrip("/")
         paths = {"send": f"/{data['type']}s/{data['id']}/send", "accepted": f"/contracts/{data['id']}/mark-accepted", "paid": f"/invoices/{data['id']}/mark-paid"}
         response = await api.post(paths[action])
-    await update.message.reply_text(response.text[:3900] if response.is_success else f"Could not update document: {api_error(response)}")
+    await update.message.reply_text(friendly_json(response, "updated") if response.is_success else f"Could not update document: {api_error(response)}")
 
 def build_application() -> Application:
     app = Application.builder().token(os.environ["TELEGRAM_BOT_TOKEN"]).post_init(set_command_menu).build()
