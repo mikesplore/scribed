@@ -416,7 +416,13 @@ async def delete_project_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         await target.reply_text(f"Could not load Gatekeeper projects: {api_error(response)}")
         return
     items = response.json()
-    keyboard = [[InlineKeyboardButton(f"View {x['slug']}", callback_data=f"project:{x['slug']}"), InlineKeyboardButton("Archive", callback_data=f"delete_project:{x['slug']}")] for x in items]
+    keyboard = []
+    for item in items:
+        slug = item["slug"]
+        keyboard.extend([
+            [InlineKeyboardButton(f"View project: {slug}", callback_data=f"project:{slug}")],
+            [InlineKeyboardButton(f"Archive project: {slug}", callback_data=f"delete_project:{slug}")],
+        ])
     await target.reply_text("Select a Gatekeeper project to archive:", reply_markup=InlineKeyboardMarkup(keyboard or [[InlineKeyboardButton("No projects found", callback_data="noop")]]))
 
 async def project_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -636,8 +642,12 @@ async def list_documents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if item["status"] == "draft":
             actions.insert(1, InlineKeyboardButton("Send", callback_data=f"doc_action:send:{kind}:{item['id']}"))
         if kind == "contracts":
-            actions.append(InlineKeyboardButton("Archive", callback_data=f"doc_action:archive:{kind}:{item['id']}"))
-        await target.reply_text(label, reply_markup=InlineKeyboardMarkup([actions]))
+            await target.reply_text(label, reply_markup=InlineKeyboardMarkup([
+                actions,
+                [InlineKeyboardButton("Archive contract", callback_data=f"doc_action:archive:{kind}:{item['id']}")],
+            ]))
+        else:
+            await target.reply_text(label, reply_markup=InlineKeyboardMarkup([actions]))
 
 async def document_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not owner_only(update): return
