@@ -202,7 +202,8 @@
     {% if payment_instructions %}
     <div class="notes">
       <div class="label">Payment details</div>
-      <div>{{ payment_instructions }}</div>
+      {% if payment_portal_url %}<div>Pay the current balance through Gatekeeper: <a href="{{ payment_portal_url }}">{{ payment_portal_url }}</a></div>{% endif %}
+      {% if not payment_portal_url %}<div>{{ payment_instructions }}</div>{% endif %}
     </div>
     {% endif %}
 

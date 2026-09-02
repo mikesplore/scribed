@@ -107,6 +107,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/project SLUG — view project payments and balance\n"
         "/client NAME — view client documents and totals\n"
         "/duplicate NUMBER — create a new draft from an existing document\n"
+        "/pay NUMBER — get the latest Gatekeeper payment link\n"
         "/status NUMBER — check document status\n"
         "/send NUMBER — send a document by email\n"
         "/accepted NUMBER — mark a contract accepted\n"
@@ -245,6 +246,7 @@ async def begin_project_document(update: Update, context: ContextTypes.DEFAULT_T
         "project_name": project.get("name") or project.get("projectName") or project.get("project_name"),
         "amount": str(balance) if balance is not None and balance > 0 else None,
         "currency": project.get("currency"),
+        "payment_portal_url": project.get("paymentPortalUrl") or project.get("payment_portal_url") or project.get("paymentUrl"),
     }
     if kind == "invoice" and balance is not None:
         values["amount_paid"] = str(paid) if paid else None
@@ -561,6 +563,28 @@ async def client_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     lines += [f"{x['number']} — {x['project_name']} — {x['amount']} {x['currency']} — {x['status']}" for x in body["invoices"]]
     await target.reply_text("\n".join(lines)[:3900])
 
+async def payment_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not owner_only(update) or len(context.args) != 1 or not valid_number(context.args[0]):
+        await update.message.reply_text("Usage: /pay MK-INV-0001")
+        return
+    async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS, timeout=HTTP_TIMEOUT) as api:
+        info = await api.get(f"/documents/{context.args[0]}")
+    if not info.is_success:
+        await update.message.reply_text(f"Could not find document: {api_error(info)}"); return
+    project_id = info.json().get("gatekeeper_project_id")
+    if not project_id:
+        await update.message.reply_text("This invoice is not linked to a Gatekeeper project."); return
+    base = os.getenv("GATEKEEPER_BASE_URL", "").rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as api:
+            login = await api.post(base + "/api/auth/login", json={"email": os.environ["GATEKEEPER_EMAIL"], "password": os.environ["GATEKEEPER_PASSWORD"]})
+            body = await api.get(base + f"/api/admin/projects/{project_id}", headers={"Authorization": f"Bearer {login.json()['token']}"})
+        project = body.json().get("project", body.json())
+        link = project.get("paymentPortalUrl") or project.get("payment_portal_url") or project.get("paymentUrl")
+    except (httpx.RequestError, KeyError, ValueError):
+        await update.message.reply_text("I couldn't reach Gatekeeper for the current payment link."); return
+    await update.message.reply_text(f"Payment link for {context.args[0]}:\n{link}" if link else "Gatekeeper has not provided a payment portal for this project yet.")
+
 async def my_documents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not owner_only(update): return
     await list_documents(update, context)
@@ -662,6 +686,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("document", document_lookup))
     app.add_handler(CommandHandler("duplicate", duplicate_document))
     app.add_handler(CommandHandler("client", client_history))
+    app.add_handler(CommandHandler("pay", payment_link))
     app.add_handler(CommandHandler("my_documents", my_documents))
     app.add_handler(CommandHandler("contracts", list_documents))
     app.add_handler(CommandHandler("invoices", list_documents))
@@ -695,6 +720,7 @@ async def set_command_menu(application: Application) -> None:
         BotCommand("project", "View project details and payments"),
         BotCommand("client", "View client history"),
         BotCommand("duplicate", "Duplicate a document"),
+        BotCommand("pay", "Get the current payment link"),
         BotCommand("status", "Check document status"),
         BotCommand("send", "Send a document"),
         BotCommand("accepted", "Mark a contract accepted"),
