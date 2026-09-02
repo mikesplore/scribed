@@ -252,8 +252,7 @@ async def begin_project_document(update: Update, context: ContextTypes.DEFAULT_T
         values["amount_paid"] = str(paid) if paid else None
         values["original_amount"] = str(balance + paid) if paid else str(balance)
         values["payments"] = payments
-    if kind == "contract":
-        values["gatekeeper_project_id"] = project.get("id") or project.get("slug")
+    values["gatekeeper_project_id"] = project.get("id") or project.get("slug")
     context.user_data.update({key: value for key, value in values.items() if value not in (None, "")})
     fields = context.user_data["fields"]
     missing = [field for field in fields if not context.user_data.get(field)]
