@@ -116,28 +116,28 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not owner_only(update): return
     await update.message.reply_text(
         "Scribed commands:\n\n"
-        "/newcontract — create a contract\n"
-        "/newinvoice — create an invoice\n"
+        "/newcontract: create a contract\n"
+        "/newinvoice: create an invoice\n"
         "\nCreation options:\n"
         "• From scratch\n"
         "• From a Gatekeeper project (prefills client, project, balance, and link)\n\n"
-        "/contracts — list active contracts\n"
-        "/invoices — list active invoices\n"
+        "/contracts: list active contracts\n"
+        "/invoices: list active invoices\n"
         "Use the buttons on each document to view status, send, duplicate, or archive.\n"
-        "/projects — list Gatekeeper projects\n"
-        "/project SLUG — view project payments and balance\n"
-        "/client NAME — view client documents and totals\n"
-        "/duplicate NUMBER — create a new draft from an existing document\n"
-        "/pay NUMBER — get the latest Gatekeeper payment link\n"
-        "/status NUMBER — check document status\n"
-        "/send NUMBER — send a document by email\n"
-        "/accepted NUMBER — mark a contract accepted\n"
-        "/paid NUMBER — mark an invoice paid\n\n"
-        "/duplicate NUMBER — create a new draft from a document\n"
-        "/client NAME — view a client's document and payment history\n\n"
+        "/projects: list Gatekeeper projects\n"
+        "/project SLUG: view project payments and balance\n"
+        "/client NAME: view client documents and totals\n"
+        "/duplicate NUMBER: create a new draft from an existing document\n"
+        "/pay NUMBER: get the latest Gatekeeper payment link\n"
+        "/status NUMBER: check document status\n"
+        "/send NUMBER: send a document by email\n"
+        "/accepted NUMBER: mark a contract accepted\n"
+        "/paid NUMBER: mark an invoice paid\n\n"
+        "/duplicate NUMBER: create a new draft from a document\n"
+        "/client NAME: view a client's document and payment history\n\n"
         "Gatekeeper project selection and archiving are under /start → Delete document.\n\n"
-        "/cancel — cancel a workflow\n"
-        "/help — show this help"
+        "/cancel: cancel a workflow\n"
+        "/help: show this help"
     )
 
 INVOICE_FIELDS = ["client_name", "client_email", "project_name", "description", "amount"]
@@ -358,7 +358,7 @@ async def confirm_conversation(update: Update, context: ContextTypes.DEFAULT_TYP
         logger.exception("Scribed API request failed")
         await target.reply_text("I couldn't reach Scribed. Nothing was created. Tap Create to retry safely.")
         return 1
-    if response.is_success: await target.reply_document(InputFile(response.content, filename=response_filename(response, filename)), caption="Done — your document is ready.")
+    if response.is_success: await target.reply_document(InputFile(response.content, filename=response_filename(response, filename)), caption="Done. Your document is ready.")
     else:
         await target.reply_text(f"I hit a snag while creating it: {api_error(response)}\nNothing was created. You can tap Create to retry or /cancel.")
         return 1
@@ -451,7 +451,7 @@ async def project_details(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     paid, balance = payment_summary(project, payments)
     currency = project.get("currency", "")
     text = (f"Project: {project.get('name', slug)}\nSlug: {project.get('slug', slug)}\n"
-            f"Status: {project.get('status', 'unknown')}\nDomain: {project.get('domain', '—')}\n"
+            f"Status: {project.get('status', 'unknown')}\nDomain: {project.get('domain', 'unknown')}\n"
             f"Client: {project.get('clientName', 'Unknown')}\nAmount due: {project.get('amountDue', 'Unknown')} {currency}\n"
             f"Paid: {paid if paid is not None else 'Unknown'} {currency}\n"
             f"Balance: {balance if balance is not None else 'Unknown'} {currency}\n"
@@ -584,8 +584,8 @@ async def client_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await target.reply_text(f"Could not load client history: {api_error(response)}"); return
     body = response.json(); totals = body["totals"]
     lines = [f"Client: {body['client_name']}", f"Billed: {totals['billed']}", f"Paid: {totals['paid']}", f"Balance: {totals['balance']}", ""]
-    lines += [f"{x['number']} — {x['project_name']} — {x['status']}" for x in body["contracts"]]
-    lines += [f"{x['number']} — {x['project_name']} — {x['amount']} {x['currency']} — {x['status']}" for x in body["invoices"]]
+    lines += [f"{x['number']}: {x['project_name']}: {x['status']}" for x in body["contracts"]]
+    lines += [f"{x['number']}: {x['project_name']}: {x['amount']} {x['currency']}: {x['status']}" for x in body["invoices"]]
     await target.reply_text("\n".join(lines)[:3900])
 
 async def payment_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -630,7 +630,7 @@ async def list_documents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not documents:
         await target.reply_text(f"No {kind} found."); return
     for item in documents[:30]:
-        label = f"{item['number']} — {item['client_name']} — {item['status']}"
+        label = f"{item['number']}: {item['client_name']}: {item['status']}"
         actions = [InlineKeyboardButton("Status", callback_data=f"doc_action:status:{kind}:{item['id']}:{item['number']}"),
                    InlineKeyboardButton("Duplicate", callback_data=f"doc_action:duplicate:{kind}:{item['id']}")]
         if item["status"] == "draft":
