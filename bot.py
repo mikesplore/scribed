@@ -519,7 +519,7 @@ async def new_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS, timeout=HTTP_TIMEOUT) as api:
         response = await api.post("/invoices", json={"client_name": client, "project_name": project, "description": description, "amount": amount}, headers={"Idempotency-Key": str(uuid4())})
     if response.is_success:
-        await update.message.reply_document(InputFile(response.content, filename="invoice.pdf"))
+        await update.message.reply_document(InputFile(response.content, filename=response_filename(response, "invoice.pdf")))
     else: await update.message.reply_text(f"Could not create invoice: {api_error(response)}")
 
 async def new_contract(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -532,7 +532,7 @@ async def new_contract(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text("Amount must be a positive number."); return
     payload = {"client_name": client, "project_name": project, "scope": scope, "deliverables": [x.strip() for x in deliverables.split(",") if x.strip()], "timeline": timeline, "amount": amount, "payment_schedule": schedule}
     async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS, timeout=HTTP_TIMEOUT) as api: response = await api.post("/contracts", json=payload, headers={"Idempotency-Key": str(uuid4())})
-    if response.is_success: await update.message.reply_document(InputFile(response.content, filename="contract.pdf"))
+    if response.is_success: await update.message.reply_document(InputFile(response.content, filename=response_filename(response, "contract.pdf")))
     else: await update.message.reply_text(f"Could not create contract: {api_error(response)}")
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -567,7 +567,7 @@ async def duplicate_document(update: Update, context: ContextTypes.DEFAULT_TYPE)
         data = info.json()
         response = await api.post(f"/{data['type']}s/{data['id']}/duplicate")
     if response.is_success:
-        await target.reply_document(InputFile(response.content, filename=f"{number}-copy.pdf"))
+        await target.reply_document(InputFile(response.content, filename=response_filename(response, f"{number}-copy.pdf")))
     else:
         await target.reply_text(f"Could not duplicate document: {api_error(response)}")
 
@@ -657,7 +657,7 @@ async def document_action(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.message.reply_text(f"Could not {action} document: {api_error(response)}")
         return
     if action in {"duplicate", "send"} and response.headers.get("content-type", "").startswith("application/pdf"):
-        await query.message.reply_document(InputFile(response.content, filename=f"{action}.pdf"), caption="Done.")
+        await query.message.reply_document(InputFile(response.content, filename=response_filename(response, f"{action}.pdf")), caption="Done.")
     else:
         await query.message.reply_text(friendly_json(response, "completed"))
 

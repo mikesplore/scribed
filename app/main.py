@@ -86,7 +86,8 @@ def create_contract(request: ContractRequest, db: Session = Depends(get_db), ide
         if existing:
             if existing.request_fingerprint != fingerprint(request.model_dump()):
                 raise HTTPException(status_code=409, detail="Idempotency-Key was already used with different data")
-            return _file_response(existing.pdf_path, existing.contract_number)
+            return _file_response(existing.pdf_path, existing.contract_number,
+                                  existing.gatekeeper_project_id, existing.project_name, "contract")
     number = next_number(db, "contract", "MK-CON")
     request_data = request.model_dump()
     request_data["contract_number"] = number
@@ -127,7 +128,8 @@ def create_invoice(request: InvoiceRequest, db: Session = Depends(get_db), idemp
         if existing:
             if existing.request_fingerprint != fingerprint(request.model_dump()):
                 raise HTTPException(status_code=409, detail="Idempotency-Key was already used with different data")
-            return _file_response(existing.pdf_path, existing.invoice_number)
+            return _file_response(existing.pdf_path, existing.invoice_number,
+                                  existing.gatekeeper_project_id, existing.project_name, "invoice")
     number = next_number(db, "invoice", "MK-INV")
     request_data = request.model_dump()
     request_data["invoice_number"] = number
@@ -167,13 +169,16 @@ def duplicate_invoice(document_id: int, db: Session = Depends(get_db)) -> Respon
     return create_invoice(InvoiceRequest(**data), db)
 
 
-def _file_response(path: str, filename: str) -> Response:
+def _file_response(path: str, filename: str, project_id: str | None = None,
+                   project_name: str | None = None, kind: str | None = None) -> Response:
     try:
         content = read_pdf(path)
     except (FileNotFoundError, OSError):
         raise HTTPException(status_code=404, detail="PDF file not found")
+    download_name = (pdf_filename(project_id, project_name, kind)
+                     if project_name and kind else f"{filename}.pdf")
     return Response(content=content, media_type="application/pdf",
-                    headers={"Content-Disposition": f'inline; filename="{filename}.pdf"'})
+                    headers={"Content-Disposition": f'inline; filename="{download_name}"'})
 
 
 @app.get("/contracts/{document_id}", response_class=Response)
@@ -181,7 +186,8 @@ def get_contract(document_id: int, db: Session = Depends(get_db)) -> Response:
     document = db.get(Contract, document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Contract not found")
-    return _file_response(document.pdf_path, document.contract_number)
+    return _file_response(document.pdf_path, document.contract_number,
+                          document.gatekeeper_project_id, document.project_name, "contract")
 
 
 @app.get("/invoices/{document_id}", response_class=Response)
@@ -189,7 +195,8 @@ def get_invoice(document_id: int, db: Session = Depends(get_db)) -> Response:
     document = db.get(Invoice, document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    return _file_response(document.pdf_path, document.invoice_number)
+    return _file_response(document.pdf_path, document.invoice_number,
+                          document.gatekeeper_project_id, document.project_name, "invoice")
 
 
 @app.get("/documents/{number}")
