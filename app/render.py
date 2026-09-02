@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 from markupsafe import escape
 from typing import Any
 
@@ -28,7 +29,17 @@ def render_pdf(template_name: str, fields: dict[str, Any]) -> bytes:
     render_fields.setdefault("payment_instructions", None)
     render_fields.setdefault("client_email", None)
     render_fields.setdefault("payments", [])
+    render_fields.setdefault("status", None)
+    public_url = os.getenv("R2_PUBLIC_URL", "").rstrip("/")
+    render_fields.setdefault(
+        "logo_url",
+        f"{public_url}/logo/logo.png" if public_url else "https://i.ibb.co/xS0CwpSn/logo.png",
+    )
     html = template.render(**render_fields)
+    if render_fields["logo_url"]:
+        logo = f'<img src="{escape(render_fields["logo_url"])}" class="brand-logo" alt="mikesplore">'
+        html = html.replace('<div class="brand-mark">mikesplore</div>', logo)
+        html = html.replace('<div class="brand">mikesplore</div>', logo)
     payments = render_fields.get("payments") or []
     if payments:
         rows = []
