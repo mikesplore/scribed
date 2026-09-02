@@ -18,7 +18,7 @@
     --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
   }
 
-  @page { size: A4; margin: 24mm 20mm 22mm 20mm; }
+  @page { size: A4; margin: 24mm 20mm 26mm 20mm; }
   * { box-sizing: border-box; }
 
   body{
@@ -30,7 +30,6 @@
     line-height:1.5;
   }
 
-  /* letterhead stripe — repeats at the physical top edge of every printed page */
   .topbar{ position:fixed; top:0; left:0; right:0; height:5px; background:var(--accent); }
 
   .sheet{ max-width: 720px; margin: 0 auto; padding: 36px 4px; }
@@ -45,15 +44,15 @@
     border-bottom:1px solid var(--hairline);
   }
   .brand-mark{ font-family:var(--font-serif); font-size:18pt; font-weight:600; letter-spacing:0.01em; }
-  /* Swap for: <img src="{{ logo_url }}" class="brand-logo" alt="mikesplore"> */
-  .brand-logo{ max-height:52px; max-width:190px; width:auto; height:auto; display:block; }
+  .brand-logo{ max-height:60px; max-width:210px; width:auto; height:auto; display:block; margin-bottom:8px; }
   .brand-tagline{ margin-top:4px; color:var(--muted); font-size:9pt; }
+  .brand-contact{ margin-top:6px; color:var(--muted); font-size:8.5pt; line-height:1.5; }
 
-  .doc-meta{ text-align:right; }
-  .doc-title{ font-family:var(--font-serif); font-size:16.5pt; letter-spacing:-0.01em; margin:0 0 8px; }
-  .meta-row{ display:flex; justify-content:flex-end; gap:10px; font-size:9.5pt; color:var(--muted); }
+  .doc-meta{ text-align:right; min-width:190px; }
+  .doc-title{ font-family:var(--font-serif); font-size:15pt; letter-spacing:-0.01em; margin:0 0 8px; }
+  .meta-row{ display:flex; justify-content:flex-end; gap:8px; font-size:9pt; color:var(--muted); white-space:nowrap; }
   .meta-row + .meta-row{ margin-top:3px; }
-  .meta-row .val{ font-family:var(--font-mono); color:var(--ink); min-width:120px; text-align:right; }
+  .meta-row .val{ font-family:var(--font-mono); color:var(--ink); min-width:108px; text-align:right; }
 
   .status-badge{
     display:inline-block;
@@ -75,10 +74,12 @@
   .party-grid{ display:flex; justify-content:space-between; gap:40px; }
 
   /* ---- Line items ---- */
-  table.items{ width:100%; border-collapse:collapse; margin-top:6px; }
+  table.items{ width:100%; border-collapse:collapse; margin-top:6px; table-layout:fixed; }
+  table.items colgroup .col-desc{ width:72%; }
+  table.items colgroup .col-amount{ width:28%; }
   table.items thead th{
     text-align:left;
-    font-weight:500;
+    font-weight:700;
     color:var(--muted);
     font-size:9pt;
     padding:0 0 8px;
@@ -89,12 +90,16 @@
     padding:12px 0;
     border-bottom:1px solid var(--hairline);
     vertical-align:top;
+    overflow-wrap:break-word;
+    page-break-inside:avoid;
   }
   table.items tbody td.amount-col{
     text-align:right;
     font-variant-numeric: tabular-nums;
     white-space:nowrap;
+    padding-left:16px;
   }
+  table.items tbody td .contact{ margin-top:2px; }
   tr.paid-row td{ color:var(--muted); font-size:9.5pt; padding:8px 0; }
   tr.paid-row td:first-child{ padding-left:14px; }
   tr.paid-row td.amount-col{ font-variant-numeric: tabular-nums; }
@@ -102,14 +107,23 @@
     border-bottom:none;
     border-top:2px solid var(--accent);
     background:var(--accent-tint);
-    font-weight:600;
-    padding:12px 10px;
+    font-weight:700;
+    padding:14px 10px;
   }
-  tr.total-row td.amount-col{ color:var(--accent); font-size:11.5pt; }
-  table.payments{ width:100%; border-collapse:collapse; margin-top:20px; font-size:9.5pt; }
-  table.payments th{ text-align:left; color:var(--muted); font-weight:500; padding:0 0 7px; border-bottom:1px solid var(--hairline); }
-  table.payments td{ padding:7px 0; border-bottom:1px solid var(--hairline); color:var(--muted); }
-  table.payments .amount-col{ text-align:right; white-space:nowrap; }
+  tr.total-row td.amount-col{ color:var(--accent); font-size:14pt; letter-spacing:-0.01em; }
+
+  table.payments{ width:100%; border-collapse:collapse; margin-top:20px; font-size:9.5pt; table-layout:fixed; }
+  table.payments colgroup .col-date{ width:30%; }
+  table.payments colgroup .col-status{ width:35%; }
+  table.payments colgroup .col-amount{ width:35%; }
+  table.payments th{ text-align:left; color:var(--muted); font-weight:700; padding:0 0 7px; border-bottom:1px solid var(--hairline); }
+  table.payments th.amount-col{ text-align:right; }
+  table.payments td{ padding:7px 0; border-bottom:1px solid var(--hairline); color:var(--muted); page-break-inside:avoid; }
+  table.payments td.amount-col{ text-align:right; white-space:nowrap; }
+  table.summary{ width:100%; border-collapse:collapse; margin-top:20px; margin-left:auto; max-width:360px; }
+  table.summary th,table.summary td{ padding:7px 0; text-align:right; }
+  table.summary th{ text-align:left; font-weight:600; color:var(--muted); }
+  table.summary .balance th,table.summary .balance td{ border-top:2px solid var(--accent); background:var(--accent-tint); color:var(--accent); font-size:14pt; font-weight:700; padding:12px 10px; }
 
   /* ---- Payment details callout ---- */
   .notes{
@@ -121,6 +135,7 @@
     color:var(--muted);
   }
   .notes .label{ color:var(--ink); font-weight:600; margin-bottom:3px; }
+  .notes + .notes{ margin-top:12px; }
 
   /* ---- Footer / verification strip ---- */
   .verify{
@@ -135,6 +150,7 @@
   }
   .verify-left{ display:flex; align-items:center; gap:8px; }
   .verify-left img{ width:34px; height:34px; }
+  .page-number{ min-width:60px; text-align:right; }
   .page-number::after{ content: counter(page) " of " counter(pages); }
 </style>
 </head>
@@ -144,8 +160,19 @@
 
     <header class="masthead">
       <div>
-        <div class="brand-mark">mikesplore</div>
-        <div class="brand-tagline">Independent digital work</div>
+        {% if logo_url %}
+          <img src="{{ logo_url }}" class="brand-logo" alt="{{ from_name|default('mikesplore') }}">
+        {% else %}
+          <div class="brand-mark">{{ from_name|default('mikesplore') }}</div>
+        {% endif %}
+        <div class="brand-tagline">{{ from_tagline|default('Independent digital work') }}</div>
+        {% if from_address or from_phone or from_tax_id %}
+        <div class="brand-contact">
+          {% if from_address %}{{ from_address }}<br>{% endif %}
+          {% if from_phone %}{{ from_phone }}{% if from_tax_id %} &middot; {% endif %}{% endif %}
+          {% if from_tax_id %}Tax ID {{ from_tax_id }}{% endif %}
+        </div>
+        {% endif %}
       </div>
       <div class="doc-meta">
         <p class="doc-title">Invoice</p>
@@ -157,53 +184,69 @@
     </header>
 
     <section class="parties"><div class="party-grid">
-      <div><div class="label">From</div><div class="name">mikesplore</div><div class="contact">Independent digital work</div></div>
+          <div><div class="label">From</div><div class="name">{{ from_name|default('mikesplore') }}</div><div class="contact">{{ from_tagline|default('Independent digital work') }}</div>{% if from_address %}<div class="contact">{{ from_address }}</div>{% endif %}{% if from_phone %}<div class="contact">{{ from_phone }}</div>{% endif %}</div>
       <div><div class="label">Bill to</div><div class="name">{{ client_name }}</div>{% if client_email %}<div class="contact">{{ client_email }}</div>{% endif %}</div>
     </div>
     </section>
 
     <table class="items">
+      <colgroup><col class="col-desc"><col class="col-amount"></colgroup>
       <thead>
         <tr>
           <th>Description</th>
-          <th class="amount-col">Amount</th>
+              <th class="amount-col">Amount ({{ currency }})</th>
         </tr>
       </thead>
       <tbody>
+        {% if items %}
+          {% for item in items %}
+          <tr>
+            <td>
+              {{ item.name }}
+              {% if item.description %}<div class="contact">{{ item.description }}</div>{% endif %}
+            </td>
+            <td class="amount-col">{{ "{:,.2f}".format(item.amount) }}</td>
+          </tr>
+          {% endfor %}
+        {% else %}
         <tr>
           <td>
             {{ project_name }}
             {% if description %}<div class="contact">{{ description }}</div>{% endif %}
           </td>
-          <td class="amount-col">{{ currency }} {{ "{:,.2f}".format(original_amount if amount_paid else amount) }}</td>
-        </tr>
-        {% if amount_paid %}
-        <tr class="paid-row">
-          <td>Paid to date</td>
-          <td class="amount-col">&minus;{{ currency }} {{ "{:,.2f}".format(amount_paid) }}</td>
+          <td class="amount-col">{{ "{:,.2f}".format(original_amount if amount_paid else amount) }}</td>
         </tr>
         {% endif %}
-        <tr class="total-row">
-          <td>{% if amount_paid %}Balance due{% else %}Total due{% endif %}</td>
-          <td class="amount-col">{{ currency }} {{ "{:,.2f}".format(amount) }}</td>
-        </tr>
       </tbody>
     </table>
 
     {% if payments %}
     <table class="payments">
-      <thead><tr><th>Date</th><th>Status</th><th class="amount-col">Amount</th></tr></thead>
+      <colgroup><col class="col-date"><col class="col-status"><col class="col-amount"></colgroup>
+          <thead><tr><th>Date</th><th>Status</th><th class="amount-col">Amount ({{ currency }})</th></tr></thead>
       <tbody>{% for payment in payments if payment.status|lower in ['paid', 'success', 'successful', 'completed'] %}
-        <tr><td>{{ payment.display_date }}</td><td>{{ payment.status|capitalize }}</td><td class="amount-col">{{ currency }} {{ payment.display_amount }}</td></tr>
-      {% endfor %}</tbody><tfoot><tr class="paid-row"><td colspan="2"><strong>Total paid</strong></td><td class="amount-col"><strong>{{ currency }} {{ total_paid }}</strong></td></tr></tfoot>
+            <tr><td>{{ payment.display_date }}</td><td>{{ payment.status|capitalize }}</td><td class="amount-col">{{ payment.display_amount }}</td></tr>
+      {% endfor %}</tbody>
     </table>
     {% endif %}
 
-    {% if payment_instructions %}
+    <table class="summary"><tbody>
+      <tr><th>Subtotal</th><td>{{ "{:,.2f}".format(original_amount if amount_paid else amount) }}</td></tr>
+      <tr><th>Total paid</th><td>({{ total_paid }})</td></tr>
+      <tr class="balance"><th>Balance due ({{ currency }})</th><td>{{ "{:,.2f}".format(amount) }}</td></tr>
+    </tbody></table>
+
+    {% if payment_instructions or payment_portal_url %}
     <div class="notes">
       <div class="label">Payment details</div>
-      {% if payment_portal_url %}<div>Pay the current balance through Gatekeeper: <a href="{{ payment_portal_url }}">{{ payment_portal_url }}</a></div>{% endif %}
-      {% if not payment_portal_url %}<div>{{ payment_instructions }}</div>{% endif %}
+          {% if payment_portal_url %}<div>Pay the current balance through Gatekeeper: <a href="{{ payment_portal_url }}">{{ payment_portal_url }}</a></div>{% else %}<div>Payment details will be provided upon request.</div>{% endif %}
+    </div>
+    {% endif %}
+
+    {% if invoice_notes %}
+    <div class="notes">
+      <div class="label">Notes</div>
+      <div>{{ invoice_notes }}</div>
     </div>
     {% endif %}
 

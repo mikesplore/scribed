@@ -1,7 +1,7 @@
 from datetime import date
 from decimal import Decimal
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 from typing import Annotated
 
 DocumentNumber = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,50}$")]
@@ -42,3 +42,11 @@ class InvoiceRequest(BaseModel):
     amount_paid: Decimal | None = Field(default=None, ge=0)
     payments: list[dict] = Field(default_factory=list)
     payment_portal_url: str | None = None
+    items: list[dict] | None = None
+
+    @field_validator("description")
+    @classmethod
+    def reject_placeholder_description(cls, value: str) -> str:
+        if value.strip().lower() in {"sdfsdfsdfs", "test", "placeholder", "todo"}:
+            raise ValueError("description must contain a real invoice description")
+        return value

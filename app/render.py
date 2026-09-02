@@ -32,6 +32,20 @@ def render_pdf(template_name: str, fields: dict[str, Any]) -> bytes:
     render_fields.setdefault("payments", [])
     render_fields.setdefault("payment_portal_url", None)
     render_fields.setdefault("status", None)
+    render_fields.setdefault("from_address", "Leisure, Mombasa, 80100")
+    render_fields.setdefault("from_phone", "0745434759")
+    render_fields.setdefault("from_tax_id", None)
+    render_fields.setdefault("from_name", "mikesplore")
+    render_fields.setdefault("from_tagline", "Independent digital work")
+    render_fields.setdefault("items", None)
+    render_fields.setdefault("invoice_notes", None)
+    for field in ("issue_date", "due_date"):
+        value = render_fields.get(field)
+        if value:
+            try:
+                render_fields[field] = datetime.fromisoformat(str(value)).strftime("%d %b %Y")
+            except (TypeError, ValueError):
+                pass
     render_fields.setdefault("total_paid", render_fields.get("amount_paid") or 0)
     normalized_payments = []
     for payment in render_fields["payments"]:
@@ -54,7 +68,7 @@ def render_pdf(template_name: str, fields: dict[str, Any]) -> bytes:
     public_url = os.getenv("R2_PUBLIC_URL", "").rstrip("/")
     render_fields.setdefault(
         "logo_url",
-        f"https://i.ibb.co/qYWfJXDY/logoclear.png",
+        f"https://i.ibb.co/ymbBfLfs/logocool.png",
     )
     html = template.render(**render_fields)
     if render_fields["logo_url"]:
