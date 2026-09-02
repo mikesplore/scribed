@@ -423,12 +423,15 @@ async def project_details(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not owner_only(update): return
     query = update.callback_query
     if query: await query.answer()
+    target = update.effective_message
+    if target is None:
+        logger.warning("Project update had no effective message; slug=%r", context.args)
+        return
     slug = query.data.split(":", 1)[1] if query else (context.args[0] if context.args else "")
     if not slug:
-        await (query.message if query else update.message).reply_text("Usage: /project PROJECT_SLUG")
+        await target.reply_text("Usage: /project PROJECT_SLUG")
         return
     missing = [key for key in ("GATEKEEPER_BASE_URL", "GATEKEEPER_EMAIL", "GATEKEEPER_PASSWORD") if not os.getenv(key)]
-    target = query.message if query else update.message
     if missing:
         await target.reply_text(f"Gatekeeper is not configured. Missing: {', '.join(missing)}")
         return
