@@ -6,7 +6,10 @@ def using_r2() -> bool:
     # An explicit storage directory is the local/test override. This also
     # prevents a developer's loaded production .env from sending test PDFs to
     # R2 when tests use monkeypatch.setenv("STORAGE_DIR", ...).
-    return bool(os.getenv("R2_BUCKET")) and os.getenv("STORAGE_DIR", "storage") == "storage"
+    return bool(os.getenv("R2_BUCKET")) and (
+        os.getenv("ENVIRONMENT", "development").lower() == "production"
+        or os.getenv("STORAGE_DIR", "storage") == "storage"
+    )
 
 def upload_pdf(key: str, content: bytes) -> str:
     if using_r2():
