@@ -34,6 +34,7 @@ def render_pdf(template_name: str, fields: dict[str, Any]) -> bytes:
     render_fields.setdefault("status", None)
     render_fields.setdefault("from_address", "Leisure, Mombasa, 80100")
     render_fields.setdefault("from_phone", "0745434759")
+    render_fields.setdefault("from_email", None)
     render_fields.setdefault("from_tax_id", None)
     render_fields.setdefault("from_name", "mikesplore")
     render_fields.setdefault("from_tagline", "Independent digital work")
