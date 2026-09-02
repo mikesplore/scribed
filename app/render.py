@@ -74,6 +74,8 @@ def render_pdf(template_name: str, fields: dict[str, Any]) -> bytes:
         f"https://i.ibb.co/ymbBfLfs/logocool.png",
     )
     html = template.render(**render_fields)
+    # Keep the fixed verification strip clear of the final page's content.
+    html = html.replace("</head>", "<style>@page{margin-bottom:48mm}</style></head>")
     if render_fields["logo_url"]:
         logo = f'<img src="{escape(render_fields["logo_url"])}" class="brand-logo" style="max-height:52px;max-width:190px;width:auto;height:auto;display:block" alt="mikesplore">'
         html = html.replace('<div class="brand-mark">mikesplore</div>', logo)
