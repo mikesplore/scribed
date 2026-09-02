@@ -237,7 +237,7 @@ async def begin_project_document(update: Update, context: ContextTypes.DEFAULT_T
         await query.message.reply_text("That project preview has expired. Open the project again and try once more.")
         return ConversationHandler.END
     context.user_data.clear()
-    context.user_data.update({"kind": kind, "fields": INVOICE_FIELDS if kind == "invoice" else CONTRACT_FIELDS, "index": 0})
+    context.user_data.update({"kind": kind, "fields": INVOICE_FIELDS if kind == "invoice" else CONTRACT_FIELDS, "index": 0, "from_project": True})
     paid, balance = payment_summary(project, payments)
     values = {
         "client_name": project.get("clientName") or project.get("client_name"),
@@ -324,6 +324,10 @@ async def confirm_conversation(update: Update, context: ContextTypes.DEFAULT_TYP
     else:
         data["deliverables"] = [x.strip() for x in data["deliverables"].split(",") if x.strip()]
         endpoint, filename = "/contracts", "contract.pdf"
+    if context.user_data.get("from_project") or context.user_data.get("gatekeeper_project_id"):
+        await target.reply_text("I’ve pulled the project details and payments. Preparing the document now...")
+    else:
+        await target.reply_text("Got it. I’m putting the document together now...")
     try:
         async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS, timeout=HTTP_TIMEOUT) as api: response = await api.post(endpoint, json=data, headers={"Idempotency-Key": context.user_data["idempotency_key"]})
     except httpx.RequestError:
