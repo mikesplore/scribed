@@ -1,8 +1,218 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8"><title>Invoice {{ invoice_number }}</title>
+<meta charset="UTF-8">
+<title>Invoice {{ invoice_number }}</title>
 <style>
-:root{--ink:#1b1b18;--muted:#6b6a63;--hairline:#dcdad2;--paper:#fff;--accent:#1f4b43;--accent-tint:#eef3f1;--font-serif:'Source Serif 4',ui-serif,Georgia,'Times New Roman',serif;--font-sans:'Public Sans','IBM Plex Sans',-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;--font-mono:'IBM Plex Mono',ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace}
-@page{size:A4;margin:24mm 20mm 22mm}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--font-sans);font-size:10.5pt;line-height:1.5}.sheet{max-width:720px;margin:0 auto;padding:36px 4px}.masthead{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;padding-bottom:20px;border-bottom:1px solid var(--hairline)}.brand-mark{font-family:var(--font-serif);font-size:19pt;font-weight:600;letter-spacing:.01em}.brand-tagline{margin-top:4px;color:var(--muted);font-size:9pt}.doc-meta{text-align:right}.doc-title{font-family:var(--font-serif);font-size:15pt;margin:0 0 8px}.meta-row{display:flex;justify-content:flex-end;gap:10px;font-size:9.5pt;color:var(--muted)}.meta-row+.meta-row{margin-top:2px}.meta-row .val{font-family:var(--font-mono);color:var(--ink);min-width:120px;text-align:right}.parties{padding:22px 0}.parties .label{color:var(--muted);font-size:9pt;margin-bottom:4px}.parties .name{font-weight:600}.parties .contact{color:var(--muted);font-size:9.5pt}table.items{width:100%;border-collapse:collapse;margin-top:6px}table.items thead th{text-align:left;font-weight:500;color:var(--muted);font-size:9pt;padding:0 0 8px;border-bottom:1px solid var(--hairline)}table.items thead th.amount-col{text-align:right}table.items tbody td{padding:12px 0;border-bottom:1px solid var(--hairline);vertical-align:top}table.items tbody td.amount-col{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}tr.total-row td{border-bottom:none;border-top:2px solid var(--accent);background:var(--accent-tint);font-weight:600;padding:12px 10px}tr.total-row td.amount-col{color:var(--accent);font-size:11.5pt}tr.paid-row td{color:var(--muted);font-size:9.5pt;padding:8px 0}tr.paid-row td.amount-col{font-variant-numeric:tabular-nums}.notes{margin-top:26px;font-size:9.5pt;color:var(--muted)}.notes .label{color:var(--ink);font-weight:600;margin-bottom:3px}.verify{position:fixed;bottom:10mm;left:20mm;right:20mm;display:flex;align-items:center;justify-content:space-between;padding-top:10px;border-top:1px solid var(--hairline);font-family:var(--font-mono);font-size:8pt;color:var(--muted)}.verify-left{display:flex;align-items:center;gap:8px}.verify-left img{width:34px;height:34px}.page-number:after{content:counter(page) ' of ' counter(pages)}
-</style></head><body><div class="sheet"><header class="masthead"><div><div class="brand-mark">mikesplore</div><div class="brand-tagline">Independent digital work</div></div><div class="doc-meta"><p class="doc-title">Invoice</p><div class="meta-row"><span>Invoice no.</span><span class="val">{{ invoice_number }}</span></div><div class="meta-row"><span>Issued</span><span class="val">{{ issue_date }}</span></div>{% if due_date %}<div class="meta-row"><span>Due</span><span class="val">{{ due_date }}</span></div>{% endif %}</div></header><section class="parties"><div class="label">Bill to</div><div class="name">{{ client_name }}</div>{% if client_email %}<div class="contact">{{ client_email }}</div>{% endif %}</section><table class="items"><thead><tr><th>Description</th><th class="amount-col">Amount</th></tr></thead><tbody><tr><td>{{ project_name }}{% if description %}<div class="contact">{{ description }}</div>{% endif %}</td><td class="amount-col">{{ currency }} {{ "{:,.2f}".format(original_amount if amount_paid else amount) }}</td></tr>{% if amount_paid %}<tr class="paid-row"><td>Paid to date</td><td class="amount-col">&minus;{{ currency }} {{ "{:,.2f}".format(amount_paid) }}</td></tr>{% endif %}<tr class="total-row"><td>{% if amount_paid %}Balance due{% else %}Total due{% endif %}</td><td class="amount-col">{{ currency }} {{ "{:,.2f}".format(amount) }}</td></tr></tbody></table>{% if payment_instructions %}<div class="notes"><div class="label">Payment details</div><div>{{ payment_instructions }}</div></div>{% endif %}</div><div class="verify"><div class="verify-left">{% if qr_code_data_uri %}<img src="{{ qr_code_data_uri }}" alt="Verify this document">{% endif %}<span>Verify at scribed.mikesplore.me/verify/{{ invoice_number }}</span></div><span class="page-number"></span></div></body></html>
+  :root{
+    --ink:#1b1b18;
+    --muted:#6b6a63;
+    --hairline:#dcdad2;
+    --paper:#ffffff;
+    --accent:#1f4b43;
+    --accent-tint:#eef3f1;
+    --overdue:#8a3324;
+    --overdue-tint:#fbeaea;
+    --font-serif: 'Source Serif 4', ui-serif, Georgia, 'Times New Roman', serif;
+    --font-sans: 'Public Sans', 'IBM Plex Sans', -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+    --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  }
+
+  @page { size: A4; margin: 24mm 20mm 22mm 20mm; }
+  * { box-sizing: border-box; }
+
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:var(--font-sans);
+    font-size:10.5pt;
+    line-height:1.5;
+  }
+
+  /* letterhead stripe — repeats at the physical top edge of every printed page */
+  .topbar{ position:fixed; top:0; left:0; right:0; height:5px; background:var(--accent); }
+
+  .sheet{ max-width: 720px; margin: 0 auto; padding: 36px 4px; }
+
+  /* ---- Header ---- */
+  .masthead{
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    gap:24px;
+    padding-bottom:20px;
+    border-bottom:1px solid var(--hairline);
+  }
+  .brand-mark{ font-family:var(--font-serif); font-size:18pt; font-weight:600; letter-spacing:0.01em; }
+  /* Swap for: <img src="{{ logo_url }}" class="brand-logo" alt="mikesplore"> */
+  .brand-logo{ max-height:32px; display:block; }
+  .brand-tagline{ margin-top:4px; color:var(--muted); font-size:9pt; }
+
+  .doc-meta{ text-align:right; }
+  .doc-title{ font-family:var(--font-serif); font-size:16.5pt; letter-spacing:-0.01em; margin:0 0 8px; }
+  .meta-row{ display:flex; justify-content:flex-end; gap:10px; font-size:9.5pt; color:var(--muted); }
+  .meta-row + .meta-row{ margin-top:3px; }
+  .meta-row .val{ font-family:var(--font-mono); color:var(--ink); min-width:120px; text-align:right; }
+
+  .status-badge{
+    display:inline-block;
+    margin-top:10px;
+    padding:3px 10px;
+    font-size:8.5pt;
+    font-weight:600;
+    letter-spacing:0.02em;
+  }
+  .status-paid{ background:var(--accent-tint); color:var(--accent); }
+  .status-due{ background:#f4f1ea; color:var(--muted); }
+  .status-overdue{ background:var(--overdue-tint); color:var(--overdue); }
+
+  /* ---- Bill to ---- */
+  .parties{ padding:22px 0; }
+  .parties .label{ color:var(--muted); font-size:9pt; margin-bottom:4px; }
+  .parties .name{ font-weight:600; }
+  .parties .contact{ color:var(--muted); font-size:9.5pt; }
+
+  /* ---- Line items ---- */
+  table.items{ width:100%; border-collapse:collapse; margin-top:6px; }
+  table.items thead th{
+    text-align:left;
+    font-weight:500;
+    color:var(--muted);
+    font-size:9pt;
+    padding:0 0 8px;
+    border-bottom:1px solid var(--hairline);
+  }
+  table.items thead th.amount-col{ text-align:right; }
+  table.items tbody td{
+    padding:12px 0;
+    border-bottom:1px solid var(--hairline);
+    vertical-align:top;
+  }
+  table.items tbody td.amount-col{
+    text-align:right;
+    font-variant-numeric: tabular-nums;
+    white-space:nowrap;
+  }
+  tr.paid-row td{ color:var(--muted); font-size:9.5pt; padding:8px 0; }
+  tr.paid-row td:first-child{ padding-left:14px; }
+  tr.paid-row td.amount-col{ font-variant-numeric: tabular-nums; }
+  tr.total-row td{
+    border-bottom:none;
+    border-top:2px solid var(--accent);
+    background:var(--accent-tint);
+    font-weight:600;
+    padding:12px 10px;
+  }
+  tr.total-row td.amount-col{ color:var(--accent); font-size:11.5pt; }
+  table.payments{ width:100%; border-collapse:collapse; margin-top:20px; font-size:9.5pt; }
+  table.payments th{ text-align:left; color:var(--muted); font-weight:500; padding:0 0 7px; border-bottom:1px solid var(--hairline); }
+  table.payments td{ padding:7px 0; border-bottom:1px solid var(--hairline); color:var(--muted); }
+  table.payments .amount-col{ text-align:right; white-space:nowrap; }
+
+  /* ---- Payment details callout ---- */
+  .notes{
+    margin-top:26px;
+    padding:12px 14px;
+    border-left:2px solid var(--accent);
+    background:var(--accent-tint);
+    font-size:9.5pt;
+    color:var(--muted);
+  }
+  .notes .label{ color:var(--ink); font-weight:600; margin-bottom:3px; }
+
+  /* ---- Footer / verification strip ---- */
+  .verify{
+    position:fixed;
+    bottom:10mm; left:20mm; right:20mm;
+    display:flex; align-items:center; justify-content:space-between;
+    padding-top:10px;
+    border-top:1px solid var(--hairline);
+    font-family:var(--font-mono);
+    font-size:8pt;
+    color:var(--muted);
+  }
+  .verify-left{ display:flex; align-items:center; gap:8px; }
+  .verify-left img{ width:34px; height:34px; }
+  .page-number::after{ content: counter(page) " of " counter(pages); }
+</style>
+</head>
+<body>
+  <div class="topbar"></div>
+  <div class="sheet">
+
+    <header class="masthead">
+      <div>
+        <div class="brand-mark">mikesplore</div>
+        <div class="brand-tagline">Independent digital work</div>
+      </div>
+      <div class="doc-meta">
+        <p class="doc-title">Invoice</p>
+        <div class="meta-row"><span>Invoice no.</span><span class="val">{{ invoice_number }}</span></div>
+        <div class="meta-row"><span>Issued</span><span class="val">{{ issue_date }}</span></div>
+        {% if due_date %}<div class="meta-row"><span>Due</span><span class="val">{{ due_date }}</span></div>{% endif %}
+        {% if status %}<span class="status-badge status-{{ status }}">{{ status|capitalize }}</span>{% endif %}
+      </div>
+    </header>
+
+    <section class="parties">
+      <div class="label">Bill to</div>
+      <div class="name">{{ client_name }}</div>
+      {% if client_email %}<div class="contact">{{ client_email }}</div>{% endif %}
+    </section>
+
+    <table class="items">
+      <thead>
+        <tr>
+          <th>Description</th>
+          <th class="amount-col">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>
+            {{ project_name }}
+            {% if description %}<div class="contact">{{ description }}</div>{% endif %}
+          </td>
+          <td class="amount-col">{{ currency }} {{ "{:,.2f}".format(original_amount if amount_paid else amount) }}</td>
+        </tr>
+        {% if amount_paid %}
+        <tr class="paid-row">
+          <td>Paid to date</td>
+          <td class="amount-col">&minus;{{ currency }} {{ "{:,.2f}".format(amount_paid) }}</td>
+        </tr>
+        {% endif %}
+        <tr class="total-row">
+          <td>{% if amount_paid %}Balance due{% else %}Total due{% endif %}</td>
+          <td class="amount-col">{{ currency }} {{ "{:,.2f}".format(amount) }}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    {% if payments %}
+    <table class="payments">
+      <thead><tr><th>Date</th><th>Status</th><th class="amount-col">Amount</th></tr></thead>
+      <tbody>{% for payment in payments if payment.status|lower in ['paid', 'success', 'successful', 'completed'] %}
+        <tr><td>{{ payment.paidAt or payment.createdAt or 'Unknown date' }}</td><td>{{ payment.status|capitalize }}</td><td class="amount-col">{{ currency }} {{ payment.amount }}</td></tr>
+      {% endfor %}</tbody>
+    </table>
+    {% endif %}
+
+    {% if payment_instructions %}
+    <div class="notes">
+      <div class="label">Payment details</div>
+      <div>{{ payment_instructions }}</div>
+    </div>
+    {% endif %}
+
+  </div>
+
+  <div class="verify">
+    <div class="verify-left">
+      {% if qr_code_data_uri %}<img src="{{ qr_code_data_uri }}" alt="Verify this document">{% endif %}
+      <span>Verify at scribed.mikesplore.me/verify/{{ invoice_number }}</span>
+    </div>
+    <span class="page-number"></span>
+  </div>
+</body>
+</html>

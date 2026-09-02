@@ -328,7 +328,7 @@ async def confirm_conversation(update: Update, context: ContextTypes.DEFAULT_TYP
         async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS, timeout=HTTP_TIMEOUT) as api: response = await api.post(endpoint, json=data, headers={"Idempotency-Key": context.user_data["idempotency_key"]})
     except httpx.RequestError:
         logger.exception("Scribed API request failed")
-        await target.reply_text("I couldn't reach Scribed. Nothing was created—tap Create to retry safely.")
+        await target.reply_text("I couldn't reach Scribed. Nothing was created. Tap Create to retry safely.")
         return 1
     if response.is_success: await target.reply_document(InputFile(response.content, filename=response_filename(response, filename)), caption="Done — your document is ready.")
     else:
@@ -359,7 +359,7 @@ async def delete_contract_menu(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.callback_query.message.reply_text(f"Could not load contracts: {api_error(response)}")
         return
     items = response.json()
-    keyboard = [[InlineKeyboardButton(f"{x['number']} — {x['client_name']}", callback_data=f"delete_contract:{x['id']}")] for x in items]
+    keyboard = [[InlineKeyboardButton(f"{x['number']} / {x['client_name']}", callback_data=f"delete_contract:{x['id']}")] for x in items]
     await update.callback_query.message.reply_text("Select a contract:", reply_markup=InlineKeyboardMarkup(keyboard or [[InlineKeyboardButton("No contracts found", callback_data="noop")]]))
 
 async def delete_project_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -421,12 +421,12 @@ async def project_details(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     currency = project.get("currency", "")
     text = (f"Project: {project.get('name', slug)}\nSlug: {project.get('slug', slug)}\n"
             f"Status: {project.get('status', 'unknown')}\nDomain: {project.get('domain', '—')}\n"
-            f"Client: {project.get('clientName', '—')}\nAmount due: {project.get('amountDue', '—')} {currency}\n"
-            f"Paid: {paid if paid is not None else '—'} {currency}\n"
-            f"Balance: {balance if balance is not None else '—'} {currency}\n"
-            f"Due date: {project.get('dueDate', '—')}\n\nPayments: {len(payments)}")
+            f"Client: {project.get('clientName', 'Unknown')}\nAmount due: {project.get('amountDue', 'Unknown')} {currency}\n"
+            f"Paid: {paid if paid is not None else 'Unknown'} {currency}\n"
+            f"Balance: {balance if balance is not None else 'Unknown'} {currency}\n"
+            f"Due date: {project.get('dueDate', 'Unknown')}\n\nPayments: {len(payments)}")
     if payments:
-        text += "\n" + "\n".join(f"• {p.get('status', 'unknown')} — {p.get('amount', '—')} {project.get('currency', '')} — {p.get('paidAt', p.get('createdAt', '—'))}" for p in payments[:20])
+        text += "\n" + "\n".join(f"* {p.get('status', 'unknown')} / {p.get('amount', 'Unknown')} {project.get('currency', '')} / {p.get('paidAt', p.get('createdAt', 'Unknown'))}" for p in payments[:20])
     keyboard = [[InlineKeyboardButton("Create contract", callback_data=f"project_document:contract:{slug}"),
                  InlineKeyboardButton("Create invoice", callback_data=f"project_document:invoice:{slug}")]]
     await target.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
