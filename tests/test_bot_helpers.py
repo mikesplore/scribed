@@ -1,7 +1,7 @@
 from decimal import Decimal
 import httpx
 
-from bot import friendly_json, payment_summary
+from bot import api_error, friendly_json, payment_summary
 
 
 def test_friendly_json_formats_transition_response():
@@ -14,6 +14,16 @@ def test_friendly_json_does_not_expose_raw_response():
     response = httpx.Response(200, json={"number": "MK-INV-0171", "status": "paid"})
 
     assert "{" not in friendly_json(response)
+
+
+def test_api_error_extracts_gatekeeper_message_without_raw_json():
+    response = httpx.Response(
+        404,
+        json={"error": "project_not_found", "message": "Project not found"},
+        request=httpx.Request("GET", "http://gatekeeper.test/projects/scw"),
+    )
+
+    assert api_error(response) == "HTTP 404: Project not found"
 
 
 def test_payment_summary_uses_successful_payments_only():

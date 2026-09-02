@@ -74,6 +74,8 @@ def api_error(response: httpx.Response) -> str:
         detail = None
         if isinstance(body, dict):
             detail = body.get("detail") or body.get("message") or body.get("error")
+            if isinstance(detail, dict):
+                detail = detail.get("message") or detail.get("error")
     except (ValueError, TypeError):
         detail = None
     if not detail:
