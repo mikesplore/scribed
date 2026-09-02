@@ -123,9 +123,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• From a Gatekeeper project (prefills client, project, balance, and link)\n\n"
         "/contracts: list active contracts\n"
         "/invoices: list active invoices\n"
-        "Use the buttons on each document to view status, send, duplicate, or archive.\n"
+        "Use the buttons on each document to view status, send, or duplicate.\n"
         "/projects: list Gatekeeper projects\n"
         "/project SLUG: view project payments and balance\n"
+        "/archive PROJECT_SLUG: archive a Gatekeeper project after confirmation\n"
         "/client NAME: view client documents and totals\n"
         "/duplicate NUMBER: create a new draft from an existing document\n"
         "/pay NUMBER: get the latest Gatekeeper payment link\n"
@@ -135,7 +136,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/paid NUMBER: mark an invoice paid\n\n"
         "/duplicate NUMBER: create a new draft from a document\n"
         "/client NAME: view a client's document and payment history\n\n"
-        "Gatekeeper project selection and archiving are under /start → Delete document.\n\n"
+        "Gatekeeper project archiving is available through /archive PROJECT_SLUG.\n\n"
         "/cancel: cancel a workflow\n"
         "/help: show this help"
     )
@@ -376,7 +377,6 @@ async def delete_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await update.callback_query.answer()
     await update.callback_query.message.reply_text("What would you like to delete?", reply_markup=InlineKeyboardMarkup([
         [InlineKeyboardButton("Contract", callback_data="delete_contracts")],
-        [InlineKeyboardButton("Gatekeeper project", callback_data="delete_projects")],
     ]))
 
 async def delete_contract_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -416,14 +416,8 @@ async def delete_project_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         await target.reply_text(f"Could not load Gatekeeper projects: {api_error(response)}")
         return
     items = response.json()
-    keyboard = []
-    for item in items:
-        slug = item["slug"]
-        keyboard.extend([
-            [InlineKeyboardButton(f"View project: {slug}", callback_data=f"project:{slug}")],
-            [InlineKeyboardButton(f"Archive project: {slug}", callback_data=f"delete_project:{slug}")],
-        ])
-    await target.reply_text("Select a Gatekeeper project to archive:", reply_markup=InlineKeyboardMarkup(keyboard or [[InlineKeyboardButton("No projects found", callback_data="noop")]]))
+    keyboard = [[InlineKeyboardButton(f"View project: {x['slug']}", callback_data=f"project:{x['slug']}")] for x in items]
+    await target.reply_text("Select a Gatekeeper project to view:", reply_markup=InlineKeyboardMarkup(keyboard or [[InlineKeyboardButton("No projects found", callback_data="noop")]]))
 
 async def project_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not owner_only(update): return
@@ -481,6 +475,17 @@ async def confirm_delete_project(update: Update, context: ContextTypes.DEFAULT_T
     await update.callback_query.answer(); slug = update.callback_query.data.split(":", 1)[1]
     context.user_data["delete_project_slug"] = slug
     await update.callback_query.message.reply_text(f"Archive Gatekeeper project `{slug}`? Reply `confirm` or `cancel`.", parse_mode="Markdown")
+
+async def archive_project(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not owner_only(update): return
+    target = update.effective_message
+    if not target or len(context.args) != 1:
+        if target:
+            await target.reply_text("Usage: /archive PROJECT_SLUG")
+        return
+    slug = context.args[0].strip()
+    context.user_data["delete_project_slug"] = slug
+    await target.reply_text(f"Archive Gatekeeper project `{slug}`? Reply `confirm` or `cancel`.", parse_mode="Markdown")
 
 async def perform_delete_project(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not owner_only(update) or "delete_project_slug" not in context.user_data: return
@@ -712,7 +717,6 @@ def build_application() -> Application:
     app.add_handler(CallbackQueryHandler(project_payments, pattern="^payments:"))
     app.add_handler(CallbackQueryHandler(delete_project_menu, pattern="^projects$"))
     app.add_handler(CallbackQueryHandler(confirm_delete_contract, pattern="^delete_contract:"))
-    app.add_handler(CallbackQueryHandler(confirm_delete_project, pattern="^delete_project:"))
     # Conversations must receive confirm/cancel before the document-deletion
     # handlers below; otherwise those handlers swallow invoice confirmations.
     app.add_handler(conversation)
@@ -728,6 +732,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("contracts", list_documents))
     app.add_handler(CommandHandler("invoices", list_documents))
     app.add_handler(CommandHandler("project", project_details))
+    app.add_handler(CommandHandler("archive", archive_project))
     app.add_handler(CommandHandler("projects", delete_project_menu))
     app.add_handler(CallbackQueryHandler(list_documents, pattern="^list_(contracts|invoices)$"))
     app.add_handler(CallbackQueryHandler(document_action, pattern="^doc_action:(status|send|duplicate|archive):"))
