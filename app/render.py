@@ -57,7 +57,7 @@ def render_pdf(template_name: str, fields: dict[str, Any]) -> bytes:
     )
     html = template.render(**render_fields)
     if render_fields["logo_url"]:
-        logo = f'<img src="{escape(render_fields["logo_url"])}" class="brand-logo" alt="mikesplore">'
+        logo = f'<img src="{escape(render_fields["logo_url"])}" class="brand-logo" style="max-height:52px;max-width:190px;width:auto;height:auto;display:block" alt="mikesplore">'
         html = html.replace('<div class="brand-mark">mikesplore</div>', logo)
         html = html.replace('<div class="brand">mikesplore</div>', logo)
     return HTML(string=html, base_url=str(TEMPLATE_DIR)).write_pdf()
