@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+from datetime import datetime
 from markupsafe import escape
 from typing import Any
 
@@ -30,29 +31,33 @@ def render_pdf(template_name: str, fields: dict[str, Any]) -> bytes:
     render_fields.setdefault("client_email", None)
     render_fields.setdefault("payments", [])
     render_fields.setdefault("status", None)
+    render_fields.setdefault("total_paid", render_fields.get("amount_paid") or 0)
+    normalized_payments = []
+    for payment in render_fields["payments"]:
+        item = dict(payment)
+        raw_date = item.get("paidAt") or item.get("createdAt")
+        try:
+            item["display_date"] = datetime.fromisoformat(str(raw_date).replace("Z", "+00:00")).strftime("%d %b %Y")
+        except (TypeError, ValueError):
+            item["display_date"] = "Unknown date"
+        try:
+            item["display_amount"] = f"{float(item.get('amount', 0)):,.2f}"
+        except (TypeError, ValueError):
+            item["display_amount"] = "0.00"
+        normalized_payments.append(item)
+    render_fields["payments"] = normalized_payments
+    try:
+        render_fields["total_paid"] = f"{float(render_fields.get('amount_paid') or 0):,.2f}"
+    except (TypeError, ValueError):
+        render_fields["total_paid"] = "0.00"
     public_url = os.getenv("R2_PUBLIC_URL", "").rstrip("/")
     render_fields.setdefault(
         "logo_url",
-        f"{public_url}/logo/logo.png" if public_url else "https://i.ibb.co/xS0CwpSn/logo.png",
+        f"https://i.ibb.co/qYWfJXDY/logoclear.png",
     )
     html = template.render(**render_fields)
     if render_fields["logo_url"]:
         logo = f'<img src="{escape(render_fields["logo_url"])}" class="brand-logo" alt="mikesplore">'
         html = html.replace('<div class="brand-mark">mikesplore</div>', logo)
         html = html.replace('<div class="brand">mikesplore</div>', logo)
-    payments = render_fields.get("payments") or []
-    if payments:
-        rows = []
-        for payment in payments:
-            status = str(payment.get("status", "")).lower()
-            if status not in {"paid", "success", "successful", "completed"}:
-                continue
-            rows.append(
-                "<tr class=\"paid-row\"><td>Payment — "
-                f"{escape(payment.get('paidAt', payment.get('createdAt', '')))}</td>"
-                f"<td class=\"amount-col\">{escape(render_fields.get('currency', ''))} "
-                f"{escape(payment.get('amount', '0'))}</td></tr>"
-            )
-        if rows:
-            html = html.replace("</tbody></table>", "".join(rows) + "</tbody></table>")
     return HTML(string=html, base_url=str(TEMPLATE_DIR)).write_pdf()

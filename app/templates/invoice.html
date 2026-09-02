@@ -72,6 +72,7 @@
   .parties .label{ color:var(--muted); font-size:9pt; margin-bottom:4px; }
   .parties .name{ font-weight:600; }
   .parties .contact{ color:var(--muted); font-size:9.5pt; }
+  .party-grid{ display:flex; justify-content:space-between; gap:40px; }
 
   /* ---- Line items ---- */
   table.items{ width:100%; border-collapse:collapse; margin-top:6px; }
@@ -155,10 +156,10 @@
       </div>
     </header>
 
-    <section class="parties">
-      <div class="label">Bill to</div>
-      <div class="name">{{ client_name }}</div>
-      {% if client_email %}<div class="contact">{{ client_email }}</div>{% endif %}
+    <section class="parties"><div class="party-grid">
+      <div><div class="label">From</div><div class="name">mikesplore</div><div class="contact">Independent digital work</div></div>
+      <div><div class="label">Bill to</div><div class="name">{{ client_name }}</div>{% if client_email %}<div class="contact">{{ client_email }}</div>{% endif %}</div>
+    </div>
     </section>
 
     <table class="items">
@@ -193,8 +194,8 @@
     <table class="payments">
       <thead><tr><th>Date</th><th>Status</th><th class="amount-col">Amount</th></tr></thead>
       <tbody>{% for payment in payments if payment.status|lower in ['paid', 'success', 'successful', 'completed'] %}
-        <tr><td>{{ payment.paidAt or payment.createdAt or 'Unknown date' }}</td><td>{{ payment.status|capitalize }}</td><td class="amount-col">{{ currency }} {{ payment.amount }}</td></tr>
-      {% endfor %}</tbody>
+        <tr><td>{{ payment.display_date }}</td><td>{{ payment.status|capitalize }}</td><td class="amount-col">{{ currency }} {{ payment.display_amount }}</td></tr>
+      {% endfor %}</tbody><tfoot><tr class="paid-row"><td colspan="2"><strong>Total paid</strong></td><td class="amount-col"><strong>{{ currency }} {{ total_paid }}</strong></td></tr></tfoot>
     </table>
     {% endif %}
 
