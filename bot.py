@@ -564,16 +564,18 @@ async def client_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await target.reply_text("\n".join(lines)[:3900])
 
 async def payment_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    target = update.effective_message
     if not owner_only(update) or len(context.args) != 1 or not valid_number(context.args[0]):
-        await update.message.reply_text("Usage: /pay MK-INV-0001")
+        if target:
+            await target.reply_text("Usage: /pay MK-INV-0001")
         return
     async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS, timeout=HTTP_TIMEOUT) as api:
         info = await api.get(f"/documents/{context.args[0]}")
     if not info.is_success:
-        await update.message.reply_text(f"Could not find document: {api_error(info)}"); return
+        await target.reply_text(f"Could not find document: {api_error(info)}"); return
     project_id = info.json().get("gatekeeper_project_id")
     if not project_id:
-        await update.message.reply_text("This invoice is not linked to a Gatekeeper project."); return
+        await target.reply_text("This invoice is not linked to a Gatekeeper project."); return
     base = os.getenv("GATEKEEPER_BASE_URL", "").rstrip("/")
     try:
         async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as api:
@@ -582,8 +584,8 @@ async def payment_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         project = body.json().get("project", body.json())
         link = project.get("paymentPortalUrl") or project.get("payment_portal_url") or project.get("paymentUrl")
     except (httpx.RequestError, KeyError, ValueError):
-        await update.message.reply_text("I couldn't reach Gatekeeper for the current payment link."); return
-    await update.message.reply_text(f"Payment link for {context.args[0]}:\n{link}" if link else "Gatekeeper has not provided a payment portal for this project yet.")
+        await target.reply_text("I couldn't reach Gatekeeper for the current payment link."); return
+    await target.reply_text(f"Payment link for {context.args[0]}:\n{link}" if link else "Gatekeeper has not provided a payment portal for this project yet.")
 
 async def my_documents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not owner_only(update): return
