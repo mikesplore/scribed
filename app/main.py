@@ -9,6 +9,7 @@ from pathlib import Path
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import Response
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
@@ -40,6 +41,14 @@ def pdf_filename(project_id: str | None, project_name: str, kind: str) -> str:
     raw = project_id or project_name
     slug = "-".join("".join(char.lower() if char.isalnum() else "-" for char in raw).split("-"))
     return f"{slug or 'mikesplore'}-{kind}.pdf"
+
+
+def existing_project_document(db: Session, model, project_name: str):
+    """Return an existing document for this project, including archived rows."""
+    normalized_name = project_name.strip().lower()
+    return db.query(model).filter(
+        func.lower(func.trim(model.project_name)) == normalized_name
+    ).first()
 
 @app.middleware("http")
 async def require_api_token(request: Request, call_next):
@@ -88,6 +97,9 @@ def create_contract(request: ContractRequest, db: Session = Depends(get_db), ide
                 raise HTTPException(status_code=409, detail="Idempotency-Key was already used with different data")
             return _file_response(existing.pdf_path, existing.contract_number,
                                   existing.gatekeeper_project_id, existing.project_name, "contract")
+    existing = existing_project_document(db, Contract, request.project_name)
+    if existing:
+        raise HTTPException(status_code=409, detail="A contract already exists for this project")
     number = next_number(db, "contract", "MK-CON")
     request_data = request.model_dump()
     request_data["contract_number"] = number
@@ -130,6 +142,9 @@ def create_invoice(request: InvoiceRequest, db: Session = Depends(get_db), idemp
                 raise HTTPException(status_code=409, detail="Idempotency-Key was already used with different data")
             return _file_response(existing.pdf_path, existing.invoice_number,
                                   existing.gatekeeper_project_id, existing.project_name, "invoice")
+    existing = existing_project_document(db, Invoice, request.project_name)
+    if existing:
+        raise HTTPException(status_code=409, detail="An invoice already exists for this project")
     number = next_number(db, "invoice", "MK-INV")
     request_data = request.model_dump()
     request_data["invoice_number"] = number

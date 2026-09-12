@@ -3,8 +3,8 @@
 from alembic import op
 import sqlalchemy as sa
 
-# Keep revision identifiers within Alembic's default VARCHAR(32) column.
-revision = "20260902_cleanup_drafts"
+# Preserve the revision ID already recorded by existing databases.
+revision = "20260902_remove_test_invoice_drafts"
 down_revision = "20260902_invoice_snapshot"
 branch_labels = None
 depends_on = None

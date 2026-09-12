@@ -4,7 +4,9 @@ set -eu
 echo "Running database migrations..."
 alembic upgrade head
 
-uvicorn app.main:app --host 0.0.0.0 --port 9005 --log-level info --access-log &
+PORT="${PORT:-9005}"
+
+uvicorn app.main:app --host 0.0.0.0 --port "$PORT" --log-level info --access-log &
 api_pid=$!
 
 python bot.py &

@@ -22,25 +22,32 @@ cp .env.example .env
 
 Set `SCRIBED_API_TOKEN`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_OWNER_ID` in `.env`. Scribed loads `.env` automatically; never commit it.
 
-Start the API and bot in separate terminals:
+For local development, start both processes together with:
+
+```bash
+./dev-start.sh
+```
+
+The API uses port `8000` by default; set `PORT` to change it. The Telegram bot
+runs alongside it using Telegram polling and does not need a second port.
+Production Docker uses the same process model in one container.
 
 ## First local test
 
 ```bash
 cp .env.example .env
-.venv/bin/uvicorn app.main:app --reload
+./dev-start.sh
 ```
 
 Scribed loads variables from `.env` automatically. Do not commit `.env`.
 
 The API documentation is at <http://localhost:8000/docs> locally, or at <https://scribed.mikesplore.me/docs> in production. The default SQLite database and `storage/` directory are created automatically.
 
-In Docker, database migrations run automatically before the API and Telegram bot start (`alembic upgrade head`). Set `DATABASE_URL` in the container environment to the PostgreSQL connection string. For local development, update the schema with `alembic upgrade head`.
-
-```bash
-source .venv/bin/activate
-.venv/bin/python bot.py
-```
+In Docker, database migrations run automatically before the API and Telegram bot
+start (`alembic upgrade head`). Set `DATABASE_URL` in the container environment
+to the PostgreSQL connection string. The `scribed` Compose service exposes one
+port (`9005`) and starts both processes. For local development, update the
+schema with `alembic upgrade head`.
 
 The bot is a long-running polling process.
 
