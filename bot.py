@@ -88,6 +88,11 @@ def response_filename(response: httpx.Response, fallback: str) -> str:
     match = re.search(r'filename="?([^";]+)', response.headers.get("content-disposition", ""), re.IGNORECASE)
     return match.group(1) if match else fallback
 
+def project_filename(project_name: str, fallback: str = "document.pdf") -> str:
+    """Return the project title as a safe PDF filename fallback."""
+    slug = re.sub(r"[^a-z0-9]+", "-", (project_name or "").lower()).strip("-")[:80].rstrip("-")
+    return f"{slug or 'document'}.pdf" if project_name else fallback
+
 def friendly_json(response: httpx.Response, action: str = "updated") -> str:
     try:
         body = response.json()
@@ -359,7 +364,8 @@ async def confirm_conversation(update: Update, context: ContextTypes.DEFAULT_TYP
         logger.exception("Scribed API request failed")
         await target.reply_text("I couldn't reach Scribed. Nothing was created. Tap Create to retry safely.")
         return 1
-    if response.is_success: await target.reply_document(InputFile(response.content, filename=response_filename(response, filename)), caption="Done. Your document is ready.")
+    fallback = project_filename(data.get("project_name"), filename)
+    if response.is_success: await target.reply_document(InputFile(response.content, filename=response_filename(response, fallback)), caption="Done. Your document is ready.")
     else:
         await target.reply_text(f"I hit a snag while creating it: {api_error(response)}\nNothing was created. You can tap Create to retry or /cancel.")
         return 1
@@ -530,7 +536,7 @@ async def new_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS, timeout=HTTP_TIMEOUT) as api:
         response = await api.post("/invoices", json={"client_name": client, "project_name": project, "description": description, "amount": amount}, headers={"Idempotency-Key": str(uuid4())})
     if response.is_success:
-        await update.message.reply_document(InputFile(response.content, filename=response_filename(response, "invoice.pdf")))
+        await update.message.reply_document(InputFile(response.content, filename=response_filename(response, project_filename(project, "invoice.pdf"))))
     else: await update.message.reply_text(f"Could not create invoice: {api_error(response)}")
 
 async def new_contract(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -543,7 +549,7 @@ async def new_contract(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text("Amount must be a positive number."); return
     payload = {"client_name": client, "project_name": project, "scope": scope, "deliverables": [x.strip() for x in deliverables.split(",") if x.strip()], "timeline": timeline, "amount": amount, "payment_schedule": schedule}
     async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS, timeout=HTTP_TIMEOUT) as api: response = await api.post("/contracts", json=payload, headers={"Idempotency-Key": str(uuid4())})
-    if response.is_success: await update.message.reply_document(InputFile(response.content, filename=response_filename(response, "contract.pdf")))
+    if response.is_success: await update.message.reply_document(InputFile(response.content, filename=response_filename(response, project_filename(project, "contract.pdf"))))
     else: await update.message.reply_text(f"Could not create contract: {api_error(response)}")
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -720,6 +726,9 @@ def build_application() -> Application:
     # Conversations must receive confirm/cancel before the document-deletion
     # handlers below; otherwise those handlers swallow invoice confirmations.
     app.add_handler(conversation)
+    # Handle /cancel even when no ConversationHandler is currently active.
+    # Conversation fallbacks still receive it first during an active workflow.
+    app.add_handler(CommandHandler("cancel", cancel))
     app.add_handler(MessageHandler(filters.Regex("(?i)^(confirm|cancel)$"), perform_delete_contract))
     app.add_handler(MessageHandler(filters.Regex("(?i)^(confirm|cancel)$"), perform_delete_project))
     app.add_handler(MessageHandler(~filters.TEXT, unsupported_input))
@@ -784,5 +793,15 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 if __name__ == "__main__":
     logger.info("Starting Scribed Telegram bot (API: %s)", API_URL)
-    logger.info("Bot will keep this terminal open while waiting for Telegram messages")
-    build_application().run_polling(drop_pending_updates=True)
+    webhook_url = os.environ.get("TELEGRAM_WEBHOOK_URL", "").rstrip("/")
+    if not webhook_url:
+        raise RuntimeError("TELEGRAM_WEBHOOK_URL must be configured; polling is disabled")
+    webhook_path = os.environ.get("TELEGRAM_WEBHOOK_PATH", "telegram/webhook").strip("/")
+    webhook_port = int(os.environ.get("TELEGRAM_WEBHOOK_PORT", "9006"))
+    secret_token = os.environ.get("TELEGRAM_WEBHOOK_SECRET")
+    logger.info("Starting Scribed Telegram bot webhook on port %s", webhook_port)
+    build_application().run_webhook(
+        listen="0.0.0.0", port=webhook_port, url_path=webhook_path,
+        webhook_url=f"{webhook_url}/{webhook_path}", secret_token=secret_token,
+        drop_pending_updates=True,
+    )

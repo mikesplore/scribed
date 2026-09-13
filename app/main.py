@@ -2,31 +2,67 @@ import json
 import hashlib
 import logging
 import os
+import re
 import time
+from contextlib import asynccontextmanager
 from collections import defaultdict, deque
 from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import Response
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
+
+load_dotenv()
 
 from .db import get_db, next_number
 from .models import AuditLog, Contract, Invoice
 from .mailer import send_pdf
 from .storage import delete_pdf, read_pdf, upload_pdf
 
-load_dotenv()
 from .render import render_pdf
 from .schemas import ContractRequest, InvoiceRequest
 
 logger = logging.getLogger(__name__)
 production = os.getenv("ENVIRONMENT", "development").lower() == "production"
+telegram_application = None
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    global telegram_application
+    webhook_url = os.getenv("TELEGRAM_WEBHOOK_URL", "").rstrip("/")
+    if webhook_url and os.getenv("TELEGRAM_BOT_TOKEN"):
+        from bot import build_application
+        from telegram import Update
+
+        webhook_path = os.getenv("TELEGRAM_WEBHOOK_PATH", "telegram/webhook").strip("/")
+        if webhook_path != "telegram/webhook":
+            raise RuntimeError("TELEGRAM_WEBHOOK_PATH must be telegram/webhook when sharing the API port")
+        telegram_application = build_application()
+        await telegram_application.initialize()
+        await telegram_application.start()
+        await telegram_application.bot.set_webhook(
+            url=f"{webhook_url}/{webhook_path}",
+            secret_token=os.getenv("TELEGRAM_WEBHOOK_SECRET"),
+            drop_pending_updates=True,
+        )
+    yield
+    if telegram_application:
+        await telegram_application.stop()
+        await telegram_application.shutdown()
+
+
 app = FastAPI(title="Scribed", description="mikesplore contract and invoice PDF generation",
               docs_url=None if production else "/docs", redoc_url=None if production else "/redoc",
-              openapi_url=None if production else "/openapi.json")
+              openapi_url=None if production else "/openapi.json", lifespan=lifespan)
+cors_origins = [origin.strip() for origin in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if origin.strip()]
+app.add_middleware(CORSMiddleware, allow_origins=cors_origins, allow_credentials=False,
+                   allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+                   allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Gatekeeper-Secret"])
 MAX_BODY = 400 * 1024
 _requests: dict[str, deque[float]] = defaultdict(deque)
 
@@ -37,10 +73,16 @@ def fingerprint(payload: dict) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
 
 def pdf_filename(project_id: str | None, project_name: str, kind: str) -> str:
-    """Build a safe, human-friendly download name from the project slug."""
-    raw = project_id or project_name
-    slug = "-".join("".join(char.lower() if char.isalnum() else "-" for char in raw).split("-"))
-    return f"{slug or 'mikesplore'}-{kind}.pdf"
+    """Build a safe, readable filename from the project title.
+
+    Project IDs are useful internally but are not meaningful to a client,
+    so downloads consistently use names such as ``website.pdf``.
+    """
+    del project_id
+    slug = re.sub(r"[^a-z0-9]+", "-", (project_name or "").lower()).strip("-")
+    slug = slug[:80].rstrip("-") or "mikesplore"
+    del kind
+    return f"{slug}.pdf"
 
 
 def existing_project_document(db: Session, model, project_name: str):
@@ -56,14 +98,18 @@ async def require_api_token(request: Request, call_next):
         return Response(content='{"detail":"Payload Too Large"}', status_code=413, media_type="application/json")
     path = request.url.path
     expected = os.getenv("SCRIBED_API_TOKEN", "").strip()
-    if path in {"/health", "/docs", "/redoc", "/openapi.json"} or path.startswith("/verify/"):
+    if path in {"/health", "/docs", "/redoc", "/openapi.json", "/telegram/webhook"} or path.startswith("/verify/"):
         return await call_next(request)
     if not expected or request.headers.get("authorization") != f"Bearer {expected}":
         return Response(content='{"detail":"Authentication required"}', status_code=401, media_type="application/json")
     key = request.client.host if request.client else "unknown"
     now = time.monotonic(); window = _requests[key]
     while window and now - window[0] > 60: window.popleft()
-    if len(window) >= 60:
+    try:
+        rate_limit = max(1, int(os.getenv("RATE_LIMIT_PER_MINUTE", "60")))
+    except ValueError:
+        rate_limit = 60
+    if len(window) >= rate_limit:
         return Response(content='{"detail":"Rate limit exceeded"}', status_code=429, media_type="application/json")
     window.append(now)
     try:
@@ -78,6 +124,19 @@ def health() -> dict[str, str]:
     from .health import check_dependencies
     check_dependencies()
     return {"status": "ok"}
+
+
+@app.post("/telegram/webhook")
+async def telegram_webhook(request: Request) -> dict[str, bool]:
+    if telegram_application is None:
+        raise HTTPException(status_code=503, detail="Telegram webhook is not configured")
+    expected = os.getenv("TELEGRAM_WEBHOOK_SECRET")
+    if expected and request.headers.get("x-telegram-bot-api-secret-token") != expected:
+        raise HTTPException(status_code=403, detail="Invalid webhook secret")
+    from telegram import Update
+    update = Update.de_json(await request.json(), telegram_application.bot)
+    await telegram_application.process_update(update)
+    return {"ok": True}
 
 
 @app.post("/generate/contract", response_class=Response)
@@ -104,7 +163,7 @@ def create_contract(request: ContractRequest, db: Session = Depends(get_db), ide
     request_data = request.model_dump()
     request_data["contract_number"] = number
     pdf = render_pdf("contract.html", request_data)
-    location = f"contracts/{number}.pdf"
+    location = f"contracts/{pdf_filename(request.gatekeeper_project_id, request.project_name, 'contract')}"
     document = Contract(contract_number=number, client_name=request.client_name, project_name=request.project_name,
                         gatekeeper_project_id=request.gatekeeper_project_id,
                         terms_json=json.dumps(request_data, default=str), pdf_path=location,
@@ -149,7 +208,7 @@ def create_invoice(request: InvoiceRequest, db: Session = Depends(get_db), idemp
     request_data = request.model_dump()
     request_data["invoice_number"] = number
     pdf = render_pdf("invoice.html", request_data)
-    location = f"invoices/{number}.pdf"
+    location = f"invoices/{pdf_filename(request.gatekeeper_project_id, request.project_name, 'invoice')}"
     document = Invoice(invoice_number=number, client_name=request.client_name, project_name=request.project_name, amount=request.amount,
                        client_email=request.client_email, gatekeeper_project_id=request.gatekeeper_project_id,
                        currency=request.currency, terms_json=json.dumps(request_data, default=str), pdf_path=location,

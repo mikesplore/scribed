@@ -28,12 +28,12 @@ def test_invoice_generates_pdf():
     assert response.body.startswith(b"%PDF")
 
 
-def test_project_download_filename_uses_slug():
+def test_project_download_filename_uses_project_name():
     response = generate_invoice(InvoiceRequest(**{
         "client_name": "Ada", "project_name": "Website", "description": "Build",
         "amount": "120000", "gatekeeper_project_id": "client-portal",
     }))
-    assert 'filename="client-portal-invoice.pdf"' in response.headers["content-disposition"]
+    assert 'filename="website.pdf"' in response.headers["content-disposition"]
 
 
 def test_invoice_verification_url_is_not_duplicated():

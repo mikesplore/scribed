@@ -3,7 +3,9 @@ import os
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool, text
+from dotenv import load_dotenv
 
+load_dotenv()
 from app.db import Base
 from app import models  # noqa: F401
 
@@ -26,12 +28,11 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     connectable = engine_from_config(config.get_section(config.config_ini_section, {}), prefix="sqlalchemy.", poolclass=pool.NullPool)
     with connectable.connect() as connection:
-        # Older deployments may point at revisions that were intentionally
-        # removed. Forget that obsolete marker so the one canonical migration
-        # can rebuild the schema exactly once.
+        # Remove only version markers from the deleted migration history. The
+        # current baseline itself is never reset automatically.
         if connection.dialect.has_table(connection, "alembic_version"):
             current = connection.execute(text("SELECT version_num FROM alembic_version")).scalar()
-            if current and current != "20260913_clean_schema":
+            if current and current != "20260913_current_schema":
                 connection.execute(text("DELETE FROM alembic_version"))
                 connection.commit()
         context.configure(connection=connection, target_metadata=target_metadata)

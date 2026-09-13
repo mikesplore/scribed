@@ -29,8 +29,8 @@ For local development, start both processes together with:
 ```
 
 The API uses port `8000` by default; set `PORT` to change it. The Telegram bot
-runs alongside it using Telegram polling and does not need a second port.
-Production Docker uses the same process model in one container.
+webhook is served by the same FastAPI process and port. Route the configured
+webhook URL and path to the API through the reverse proxy.
 
 ## First local test
 
@@ -49,7 +49,8 @@ to the PostgreSQL connection string. The `scribed` Compose service exposes one
 port (`9005`) and starts both processes. For local development, update the
 schema with `alembic upgrade head`.
 
-The bot is a long-running polling process.
+Polling is disabled. Configure `TELEGRAM_WEBHOOK_URL` and
+`TELEGRAM_WEBHOOK_SECRET` before starting the bot.
 
 ## Telegram commands
 
@@ -72,7 +73,7 @@ Document creation is conversational and requires confirmation. `/start` also pro
 
 ## API and security
 
-Management routes require `Authorization: Bearer <SCRIBED_API_TOKEN>`. `/health` and `/verify/{number}` are public. The API rate limit is currently 60 authenticated requests per minute per client IP.
+Management routes require `Authorization: Bearer <SCRIBED_API_TOKEN>`. `/health` and `/verify/{number}` are public. The API rate limit defaults to 60 requests per minute per client IP and is configurable with `RATE_LIMIT_PER_MINUTE`. CORS is disabled by default; configure trusted origins with the comma-separated `CORS_ALLOWED_ORIGINS` variable.
 
 Contracts can be archived with `DELETE /contracts/{id}` and permanently deleted only afterward with `DELETE /contracts/{id}/permanent`. Audit history is available at `GET /audit/{number}`.
 
