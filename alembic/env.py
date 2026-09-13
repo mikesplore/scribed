@@ -10,7 +10,10 @@ from app import models  # noqa: F401
 config = context.config
 if config.config_file_name:
     fileConfig(config.config_file_name)
-config.set_main_option("sqlalchemy.url", os.getenv("DATABASE_URL", "sqlite:///:memory:"))
+# Alembic is a process-level CLI, so its local default must persist the
+# version marker between invocations. Application tests use an in-memory
+# database through app.db; production supplies DATABASE_URL explicitly.
+config.set_main_option("sqlalchemy.url", os.getenv("DATABASE_URL", "sqlite:///./scribed.db"))
 target_metadata = Base.metadata
 
 
