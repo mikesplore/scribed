@@ -4,7 +4,7 @@ from pathlib import Path
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./scribed.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///:memory:")
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 engine = create_engine(DATABASE_URL, connect_args=connect_args)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
@@ -15,13 +15,16 @@ class Base(DeclarativeBase):
 
 
 def init_db() -> None:
-    """Create the local schema for backwards-compatible test/dev setup.
+    """Reset and create the local schema for test/dev setup.
 
     Production startup uses Alembic via docker-start.sh. Keeping this helper
     avoids breaking existing local scripts and tests that explicitly request
     an in-process SQLite database initialization.
     """
     from . import models  # noqa: F401
+    # This helper is intentionally disposable. Production uses Alembic; local
+    # tests and one-off scripts must never inherit rows from a previous run.
+    Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     if engine.dialect.name == "sqlite":
         additions = {"contracts": [("accepted_at", "DATETIME"), ("pdf_hash", "VARCHAR(64)"), ("gatekeeper_project_id", "VARCHAR(64)"), ("archived_at", "DATETIME"), ("idempotency_key", "VARCHAR(128)"), ("request_fingerprint", "VARCHAR(64)")],
