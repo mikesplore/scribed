@@ -64,6 +64,7 @@ class Payment(Base):
     paid_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     receipt_number: Mapped[str] = mapped_column(String(60), unique=True)
     receipt_path: Mapped[str] = mapped_column(Text)
+    idempotency_key: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
 
 
 class AuditLog(Base):

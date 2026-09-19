@@ -367,7 +367,8 @@ def record_gatekeeper_suspension(payload: dict, db: Session = Depends(get_db), x
 
 
 @app.post("/integrations/gatekeeper/payments")
-def record_gatekeeper_payment(payload: dict, db: Session = Depends(get_db), x_gatekeeper_secret: str | None = Header(default=None)) -> dict:
+def record_gatekeeper_payment(payload: dict, db: Session = Depends(get_db), x_gatekeeper_secret: str | None = Header(default=None), idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict:
+    if not isinstance(idempotency_key, str): idempotency_key = None
     expected = os.getenv("SCRIBED_INTEGRATION_SECRET")
     if not expected or x_gatekeeper_secret != expected:
         raise HTTPException(status_code=401, detail="Invalid integration secret")
@@ -384,7 +385,10 @@ def record_gatekeeper_payment(payload: dict, db: Session = Depends(get_db), x_ga
         raise HTTPException(status_code=404, detail="Invoice not found for project")
     if currency.upper() != invoice.currency.upper():
         raise HTTPException(status_code=409, detail="Payment currency does not match the invoice")
-    existing = db.query(Payment).filter_by(provider_reference=provider_reference).first()
+    payment_query = db.query(Payment).filter(Payment.provider_reference == provider_reference)
+    if idempotency_key:
+        payment_query = db.query(Payment).filter((Payment.provider_reference == provider_reference) | (Payment.idempotency_key == idempotency_key))
+    existing = payment_query.first()
     if existing:
         return {"invoice_number": invoice.invoice_number, "receipt_number": existing.receipt_number, "status": invoice.status, "idempotent": True}
     paid_at = datetime.now(timezone.utc)
@@ -392,7 +396,9 @@ def record_gatekeeper_payment(payload: dict, db: Session = Depends(get_db), x_ga
     if paid_amount <= 0 or existing_paid + paid_amount > Decimal(str(invoice.amount)):
         raise HTTPException(status_code=409, detail="Payment exceeds the invoice balance")
     total_paid = existing_paid + paid_amount
-    invoice.status = "paid" if total_paid >= Decimal(str(invoice.amount)) else "partially_paid"
+    invoice_total = Decimal(str(invoice.amount)).quantize(Decimal("0.01"))
+    total_paid = total_paid.quantize(Decimal("0.01"))
+    invoice.status = "paid" if total_paid >= invoice_total else "partially_paid"
     invoice.paid_at = paid_at if invoice.status == "paid" else invoice.paid_at
     receipt_number = f"RCPT-{invoice.invoice_number}-{provider_reference[-8:]}"
     receipt_data = {"receipt_number": receipt_number, "invoice_number": invoice.invoice_number,
@@ -401,12 +407,17 @@ def record_gatekeeper_payment(payload: dict, db: Session = Depends(get_db), x_ga
                     "paid_at": paid_at.isoformat(), "amount": f"{paid_amount:,.2f}", "currency": invoice.currency}
     receipt_pdf = render_pdf("receipt.html", receipt_data)
     receipt_path = upload_pdf(f"receipts/{receipt_number}.pdf", receipt_pdf)
-    db.add(Payment(invoice_id=invoice.id, provider=provider, provider_reference=provider_reference, amount=paid_amount, currency=currency, paid_at=paid_at, receipt_number=receipt_number, receipt_path=receipt_path))
-    invoice.receipt_number = receipt_number
-    invoice.receipt_path = receipt_path
-    existing_detail = f"provider_reference={provider_reference}"
-    audit(db, "payment_received", "invoice", invoice.invoice_number, existing_detail)
-    db.commit()
+    try:
+        db.add(Payment(invoice_id=invoice.id, provider=provider, provider_reference=provider_reference, amount=paid_amount, currency=currency, paid_at=paid_at, receipt_number=receipt_number, receipt_path=receipt_path, idempotency_key=idempotency_key))
+        invoice.receipt_number = receipt_number
+        invoice.receipt_path = receipt_path
+        existing_detail = f"provider_reference={provider_reference}"
+        audit(db, "payment_received", "invoice", invoice.invoice_number, existing_detail)
+        db.commit()
+    except Exception:
+        db.rollback()
+        delete_pdf(receipt_path)
+        raise
     return {"invoice_number": invoice.invoice_number, "receipt_number": receipt_number, "status": invoice.status, "paid_at": invoice.paid_at, "idempotent": False}
 
 

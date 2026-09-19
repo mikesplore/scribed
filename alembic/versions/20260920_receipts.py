@@ -19,6 +19,7 @@ def upgrade() -> None:
         sa.Column("paid_at", sa.DateTime, nullable=False),
         sa.Column("receipt_number", sa.String(60), nullable=False, unique=True),
         sa.Column("receipt_path", sa.Text, nullable=False),
+        sa.Column("idempotency_key", sa.String(255), unique=True),
     )
 def downgrade() -> None:
     op.drop_constraint("uq_invoices_receipt_number", "invoices", type_="unique")
