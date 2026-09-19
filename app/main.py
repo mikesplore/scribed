@@ -365,6 +365,29 @@ def record_gatekeeper_suspension(payload: dict, db: Session = Depends(get_db), x
             "reason": payload.get("reason", "Gatekeeper project suspended")}
 
 
+@app.post("/integrations/gatekeeper/payments")
+def record_gatekeeper_payment(payload: dict, db: Session = Depends(get_db), x_gatekeeper_secret: str | None = Header(default=None)) -> dict:
+    expected = os.getenv("SCRIBED_INTEGRATION_SECRET")
+    if not expected or x_gatekeeper_secret != expected:
+        raise HTTPException(status_code=401, detail="Invalid integration secret")
+    project_id = str(payload.get("project_id", ""))
+    provider_reference = str(payload.get("provider_reference", ""))
+    if not project_id or not provider_reference:
+        raise HTTPException(status_code=422, detail="project_id and provider_reference are required")
+    invoice = db.query(Invoice).filter_by(gatekeeper_project_id=project_id, archived_at=None).order_by(Invoice.created_at.desc()).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found for project")
+    existing_detail = f"provider_reference={provider_reference}"
+    already_recorded = db.query(AuditLog).filter_by(action="payment_received", document_number=invoice.invoice_number).filter(AuditLog.detail == existing_detail).first()
+    if already_recorded or invoice.status == "paid":
+        return {"invoice_number": invoice.invoice_number, "status": invoice.status, "idempotent": True}
+    invoice.status = "paid"
+    invoice.paid_at = datetime.now(timezone.utc)
+    audit(db, "payment_received", "invoice", invoice.invoice_number, existing_detail)
+    db.commit()
+    return {"invoice_number": invoice.invoice_number, "status": invoice.status, "paid_at": invoice.paid_at, "idempotent": False}
+
+
 @app.get("/verify/{number}")
 def verify_document(number: str, db: Session = Depends(get_db)) -> dict:
     contract = db.query(Contract).filter_by(contract_number=number).first()
