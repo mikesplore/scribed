@@ -53,6 +53,19 @@ class Invoice(Base):
     request_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
+class Payment(Base):
+    __tablename__ = "payments"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    invoice_id: Mapped[int] = mapped_column(Integer, index=True)
+    provider: Mapped[str] = mapped_column(String(30))
+    provider_reference: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    amount: Mapped[float] = mapped_column(Numeric(14, 2))
+    currency: Mapped[str] = mapped_column(String(3))
+    paid_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    receipt_number: Mapped[str] = mapped_column(String(60), unique=True)
+    receipt_path: Mapped[str] = mapped_column(Text)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_log"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

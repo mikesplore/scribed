@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from .db import get_db, next_number
-from .models import AuditLog, Contract, Invoice
+from .models import AuditLog, Contract, Invoice, Payment
 from .mailer import send_pdf
 from .storage import delete_pdf, read_pdf, upload_pdf
 
@@ -382,22 +382,29 @@ def record_gatekeeper_payment(payload: dict, db: Session = Depends(get_db), x_ga
     invoice = db.query(Invoice).filter_by(gatekeeper_project_id=project_id, archived_at=None).order_by(Invoice.created_at.desc()).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found for project")
-    if currency.upper() != invoice.currency.upper() or paid_amount != Decimal(str(invoice.amount)):
-        raise HTTPException(status_code=409, detail="Payment amount or currency does not match the invoice")
-    existing_detail = f"provider_reference={provider_reference}"
-    already_recorded = db.query(AuditLog).filter_by(action="payment_received", document_number=invoice.invoice_number).filter(AuditLog.detail == existing_detail).first()
-    if already_recorded or invoice.status == "paid":
-        return {"invoice_number": invoice.invoice_number, "status": invoice.status, "idempotent": True}
-    invoice.status = "paid"
-    invoice.paid_at = datetime.now(timezone.utc)
-    receipt_number = f"RCPT-{invoice.invoice_number}"
+    if currency.upper() != invoice.currency.upper():
+        raise HTTPException(status_code=409, detail="Payment currency does not match the invoice")
+    existing = db.query(Payment).filter_by(provider_reference=provider_reference).first()
+    if existing:
+        return {"invoice_number": invoice.invoice_number, "receipt_number": existing.receipt_number, "status": invoice.status, "idempotent": True}
+    paid_at = datetime.now(timezone.utc)
+    existing_paid = sum((Decimal(str(item.amount)) for item in db.query(Payment).filter_by(invoice_id=invoice.id).all()), Decimal("0"))
+    if paid_amount <= 0 or existing_paid + paid_amount > Decimal(str(invoice.amount)):
+        raise HTTPException(status_code=409, detail="Payment exceeds the invoice balance")
+    total_paid = existing_paid + paid_amount
+    invoice.status = "paid" if total_paid >= Decimal(str(invoice.amount)) else "partially_paid"
+    invoice.paid_at = paid_at if invoice.status == "paid" else invoice.paid_at
+    receipt_number = f"RCPT-{invoice.invoice_number}-{provider_reference[-8:]}"
     receipt_data = {"receipt_number": receipt_number, "invoice_number": invoice.invoice_number,
                     "client_name": invoice.client_name, "project_name": invoice.project_name,
                     "provider": provider, "provider_reference": provider_reference,
-                    "paid_at": invoice.paid_at.isoformat(), "amount": f"{paid_amount:,.2f}", "currency": invoice.currency}
+                    "paid_at": paid_at.isoformat(), "amount": f"{paid_amount:,.2f}", "currency": invoice.currency}
     receipt_pdf = render_pdf("receipt.html", receipt_data)
+    receipt_path = upload_pdf(f"receipts/{receipt_number}.pdf", receipt_pdf)
+    db.add(Payment(invoice_id=invoice.id, provider=provider, provider_reference=provider_reference, amount=paid_amount, currency=currency, paid_at=paid_at, receipt_number=receipt_number, receipt_path=receipt_path))
     invoice.receipt_number = receipt_number
-    invoice.receipt_path = upload_pdf(f"receipts/{receipt_number}.pdf", receipt_pdf)
+    invoice.receipt_path = receipt_path
+    existing_detail = f"provider_reference={provider_reference}"
     audit(db, "payment_received", "invoice", invoice.invoice_number, existing_detail)
     db.commit()
     return {"invoice_number": invoice.invoice_number, "receipt_number": receipt_number, "status": invoice.status, "paid_at": invoice.paid_at, "idempotent": False}
@@ -409,6 +416,13 @@ def get_invoice_receipt(document_id: int, db: Session = Depends(get_db)) -> Resp
     if not document or not document.receipt_path:
         raise HTTPException(status_code=404, detail="Receipt not found")
     return _file_response(document.receipt_path, document.receipt_number or document.invoice_number)
+
+
+@app.get("/payments/{payment_id}/receipt", response_class=Response)
+def get_payment_receipt(payment_id: int, db: Session = Depends(get_db)) -> Response:
+    payment = db.get(Payment, payment_id)
+    if not payment: raise HTTPException(status_code=404, detail="Payment not found")
+    return _file_response(payment.receipt_path, payment.receipt_number)
 
 
 @app.get("/verify/{number}")
