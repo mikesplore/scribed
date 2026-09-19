@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import time
+from decimal import Decimal, InvalidOperation
 from contextlib import asynccontextmanager
 from collections import defaultdict, deque
 from datetime import datetime, timezone
@@ -372,20 +373,42 @@ def record_gatekeeper_payment(payload: dict, db: Session = Depends(get_db), x_ga
         raise HTTPException(status_code=401, detail="Invalid integration secret")
     project_id = str(payload.get("project_id", ""))
     provider_reference = str(payload.get("provider_reference", ""))
+    provider = str(payload.get("provider", "unknown"))
+    currency = str(payload.get("currency", ""))
+    try: paid_amount = Decimal(str(payload.get("amount", "")))
+    except (InvalidOperation, ValueError): raise HTTPException(status_code=422, detail="amount must be numeric")
     if not project_id or not provider_reference:
         raise HTTPException(status_code=422, detail="project_id and provider_reference are required")
     invoice = db.query(Invoice).filter_by(gatekeeper_project_id=project_id, archived_at=None).order_by(Invoice.created_at.desc()).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found for project")
+    if currency.upper() != invoice.currency.upper() or paid_amount != Decimal(str(invoice.amount)):
+        raise HTTPException(status_code=409, detail="Payment amount or currency does not match the invoice")
     existing_detail = f"provider_reference={provider_reference}"
     already_recorded = db.query(AuditLog).filter_by(action="payment_received", document_number=invoice.invoice_number).filter(AuditLog.detail == existing_detail).first()
     if already_recorded or invoice.status == "paid":
         return {"invoice_number": invoice.invoice_number, "status": invoice.status, "idempotent": True}
     invoice.status = "paid"
     invoice.paid_at = datetime.now(timezone.utc)
+    receipt_number = f"RCPT-{invoice.invoice_number}"
+    receipt_data = {"receipt_number": receipt_number, "invoice_number": invoice.invoice_number,
+                    "client_name": invoice.client_name, "project_name": invoice.project_name,
+                    "provider": provider, "provider_reference": provider_reference,
+                    "paid_at": invoice.paid_at.isoformat(), "amount": f"{paid_amount:,.2f}", "currency": invoice.currency}
+    receipt_pdf = render_pdf("receipt.html", receipt_data)
+    invoice.receipt_number = receipt_number
+    invoice.receipt_path = upload_pdf(f"receipts/{receipt_number}.pdf", receipt_pdf)
     audit(db, "payment_received", "invoice", invoice.invoice_number, existing_detail)
     db.commit()
-    return {"invoice_number": invoice.invoice_number, "status": invoice.status, "paid_at": invoice.paid_at, "idempotent": False}
+    return {"invoice_number": invoice.invoice_number, "receipt_number": receipt_number, "status": invoice.status, "paid_at": invoice.paid_at, "idempotent": False}
+
+
+@app.get("/invoices/{document_id}/receipt", response_class=Response)
+def get_invoice_receipt(document_id: int, db: Session = Depends(get_db)) -> Response:
+    document = db.get(Invoice, document_id)
+    if not document or not document.receipt_path:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    return _file_response(document.receipt_path, document.receipt_number or document.invoice_number)
 
 
 @app.get("/verify/{number}")

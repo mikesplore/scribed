@@ -46,6 +46,8 @@ class Invoice(Base):
     pdf_path: Mapped[str] = mapped_column(Text)
     pdf_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    receipt_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    receipt_number: Mapped[str | None] = mapped_column(String(50), nullable=True, unique=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True)
     request_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)

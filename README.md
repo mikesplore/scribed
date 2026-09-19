@@ -83,6 +83,7 @@ Resend delivery requires `RESEND_API_KEY` and `RESEND_FROM_EMAIL`.
 
 Contracts can store a Gatekeeperd project UUID in `gatekeeper_project_id`. Gatekeeperd can retrieve the linked contract at `GET /contracts/by-project/{id}` and notify Scribed of a suspension at `POST /integrations/gatekeeper/suspensions` using `X-Gatekeeper-Secret`.
 Gatekeeperd can notify Scribed of a verified payment at `POST /integrations/gatekeeper/payments`; Scribed marks the linked invoice paid and records the provider reference idempotently.
+Receipts are persisted and can be retrieved by authenticated clients at `GET /invoices/{id}/receipt` after payment confirmation.
 
 Configure `SCRIBED_CALLBACK_URL` and `SCRIBED_INTEGRATION_SECRET` in Gatekeeperd, with the matching secret in Scribed.
 
