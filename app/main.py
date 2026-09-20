@@ -14,6 +14,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Re
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
@@ -476,9 +477,17 @@ def sync_gatekeeper_ledger(payload: LedgerSyncRequest, db: Session = Depends(get
         raise HTTPException(status_code=409, detail="Ledger totals do not reconcile")
     for adjustment in payload.adjustments:
         if not db.query(InvoiceAdjustment).filter_by(gatekeeper_adjustment_id=adjustment.id).first():
-            db.add(InvoiceAdjustment(invoice_id=invoice.id, gatekeeper_adjustment_id=adjustment.id, type=adjustment.type,
-                                     amount=adjustment.amount, reason=adjustment.reason, actor=adjustment.actor,
-                                     created_at=datetime.now(timezone.utc)))
+            # The same outbox event may be delivered concurrently during a replay.
+            # Keep the unique constraint as the authority and isolate a duplicate
+            # insert failure so the current invoice snapshot can still be committed.
+            try:
+                with db.begin_nested():
+                    db.add(InvoiceAdjustment(invoice_id=invoice.id, gatekeeper_adjustment_id=adjustment.id, type=adjustment.type,
+                                             amount=adjustment.amount, reason=adjustment.reason, actor=adjustment.actor,
+                                             created_at=datetime.now(timezone.utc)))
+                    db.flush()
+            except IntegrityError:
+                pass
     invoice.base_amount = payload.base_amount
     invoice.total_adjustments = total_adjustments
     invoice.total_payments = total_payments
