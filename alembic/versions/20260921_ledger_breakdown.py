@@ -13,6 +13,14 @@ def upgrade() -> None:
     for name in ("base_amount", "total_adjustments", "total_payments", "outstanding_balance"):
         if name not in columns:
             op.add_column("invoices", sa.Column(name, sa.Numeric(14, 2), nullable=False, server_default="0"))
+    op.execute("UPDATE invoices SET base_amount = amount WHERE base_amount = 0")
+    if "payments" in sa.inspect(bind).get_table_names():
+        op.execute("""
+            UPDATE invoices AS i
+            SET total_payments = COALESCE((SELECT SUM(p.amount) FROM payments AS p WHERE p.invoice_id = i.id), 0),
+                outstanding_balance = GREATEST(0, i.amount - COALESCE((SELECT SUM(p.amount) FROM payments AS p WHERE p.invoice_id = i.id), 0))
+            WHERE i.total_payments = 0 AND i.outstanding_balance = 0
+        """)
     if "invoice_adjustments" not in sa.inspect(bind).get_table_names():
         op.create_table("invoice_adjustments",
             sa.Column("id", sa.Integer, primary_key=True),
