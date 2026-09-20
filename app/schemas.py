@@ -62,6 +62,7 @@ class LedgerAdjustment(BaseModel):
 
 class LedgerSyncRequest(BaseModel):
     project_id: str = Field(min_length=1)
+    ledger_version: str = Field(min_length=1, max_length=128)
     base_amount: Decimal = Field(ge=0)
     total_adjustments: Decimal
     total_payments: Decimal = Field(ge=0)

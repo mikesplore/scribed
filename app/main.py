@@ -470,7 +470,7 @@ def sync_gatekeeper_ledger(payload: LedgerSyncRequest, db: Session = Depends(get
     invoice.amount = payload.base_amount + payload.total_adjustments
     invoice.status = "paid" if payload.outstanding_balance == 0 else ("partially_paid" if payload.total_payments > 0 else "sent")
     db.commit()
-    audit(db, "ledger_synced", "invoice", invoice.invoice_number, f"base={payload.base_amount} adjustments={payload.total_adjustments} payments={payload.total_payments} outstanding={payload.outstanding_balance}")
+    audit(db, "ledger_synced", "invoice", invoice.invoice_number, f"version={payload.ledger_version} base={payload.base_amount} adjustments={payload.total_adjustments} payments={payload.total_payments} outstanding={payload.outstanding_balance}")
     db.commit()
     return {"invoice_number": invoice.invoice_number, "status": invoice.status, "base_amount": str(invoice.base_amount), "total_adjustments": str(invoice.total_adjustments), "total_payments": str(invoice.total_payments), "outstanding_balance": str(invoice.outstanding_balance)}
 
