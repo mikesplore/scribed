@@ -18,7 +18,11 @@ def upgrade() -> None:
         op.execute("""
             UPDATE invoices AS i
             SET total_payments = COALESCE((SELECT SUM(p.amount) FROM payments AS p WHERE p.invoice_id = i.id), 0),
-                outstanding_balance = GREATEST(0, i.amount - COALESCE((SELECT SUM(p.amount) FROM payments AS p WHERE p.invoice_id = i.id), 0))
+                outstanding_balance = CASE
+                    WHEN i.amount - COALESCE((SELECT SUM(p.amount) FROM payments AS p WHERE p.invoice_id = i.id), 0) > 0
+                    THEN i.amount - COALESCE((SELECT SUM(p.amount) FROM payments AS p WHERE p.invoice_id = i.id), 0)
+                    ELSE 0
+                END
             WHERE i.total_payments = 0 AND i.outstanding_balance = 0
         """)
     if "invoice_adjustments" not in sa.inspect(bind).get_table_names():
