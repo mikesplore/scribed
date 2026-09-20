@@ -210,7 +210,10 @@ async def invoice_project_menu(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.message.reply_text("I couldn't reach Gatekeeper. Please try again shortly."); return
     if not response.is_success:
         await query.message.reply_text(f"Could not load Gatekeeper projects: {api_error(response)}"); return
-    items = response.json()
+    payload = response.json()
+    items = payload.get("projects", []) if isinstance(payload, dict) else payload
+    if not isinstance(items, list):
+        items = []
     kind = "contract" if query.data == "contract_projects" else "invoice"
     keyboard = [[InlineKeyboardButton(f"{x.get('name', x.get('slug', 'Project'))}", callback_data=f"project_document:{kind}:{x['slug']}")] for x in items]
     await query.message.reply_text(f"Choose a project for the {kind}:", reply_markup=InlineKeyboardMarkup(keyboard or [[InlineKeyboardButton("No projects found", callback_data="noop")]]))
@@ -392,7 +395,10 @@ async def delete_contract_menu(update: Update, context: ContextTypes.DEFAULT_TYP
     if not response.is_success:
         await update.callback_query.message.reply_text(f"Could not load contracts: {api_error(response)}")
         return
-    items = response.json()
+    payload = response.json()
+    items = payload.get("projects", []) if isinstance(payload, dict) else payload
+    if not isinstance(items, list):
+        items = []
     keyboard = [[InlineKeyboardButton(f"{x['number']} / {x['client_name']}", callback_data=f"delete_contract:{x['id']}")] for x in items]
     await update.callback_query.message.reply_text("Select a contract:", reply_markup=InlineKeyboardMarkup(keyboard or [[InlineKeyboardButton("No contracts found", callback_data="noop")]]))
 
