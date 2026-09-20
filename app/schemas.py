@@ -50,3 +50,21 @@ class InvoiceRequest(BaseModel):
         if value.strip().lower() in {"sdfsdfsdfs", "test", "placeholder", "todo"}:
             raise ValueError("description must contain a real invoice description")
         return value
+
+
+class LedgerAdjustment(BaseModel):
+    id: str = Field(min_length=1, max_length=64)
+    type: str = Field(pattern="^(ADDITIONAL_CHARGE|DISCOUNT)$")
+    amount: Decimal = Field(gt=0)
+    reason: str = Field(min_length=1)
+    actor: str = Field(min_length=1)
+
+
+class LedgerSyncRequest(BaseModel):
+    project_id: str = Field(min_length=1)
+    base_amount: Decimal = Field(ge=0)
+    total_adjustments: Decimal
+    total_payments: Decimal = Field(ge=0)
+    outstanding_balance: Decimal = Field(ge=0)
+    currency: str = Field(min_length=3, max_length=3)
+    adjustments: list[LedgerAdjustment] = Field(default_factory=list)

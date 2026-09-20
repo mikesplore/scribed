@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Integer, Numeric, String, Text
+from sqlalchemy import DateTime, Integer, Numeric, String, Text, CheckConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -40,6 +40,10 @@ class Invoice(Base):
     gatekeeper_project_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     terms_json: Mapped[str] = mapped_column(Text, default="{}")
     amount: Mapped[float] = mapped_column(Numeric(14, 2))
+    base_amount: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
+    total_adjustments: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
+    total_payments: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
+    outstanding_balance: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
     currency: Mapped[str] = mapped_column(String(3))
     status: Mapped[str] = mapped_column(String(20), default="draft")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -51,6 +55,20 @@ class Invoice(Base):
     archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True)
     request_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class InvoiceAdjustment(Base):
+    __tablename__ = "invoice_adjustments"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    invoice_id: Mapped[int] = mapped_column(Integer, index=True)
+    gatekeeper_adjustment_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    type: Mapped[str] = mapped_column(String(20))
+    amount: Mapped[float] = mapped_column(Numeric(14, 2))
+    reason: Mapped[str] = mapped_column(Text)
+    actor: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (CheckConstraint("type IN ('ADDITIONAL_CHARGE', 'DISCOUNT')"), CheckConstraint("amount > 0"))
 
 
 class Payment(Base):

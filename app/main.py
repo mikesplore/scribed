@@ -20,12 +20,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from .db import get_db, next_number
-from .models import AuditLog, Contract, Invoice, Payment
+from .models import AuditLog, Contract, Invoice, Payment, InvoiceAdjustment
 from .mailer import send_pdf
 from .storage import delete_pdf, read_pdf, upload_pdf
 
 from .render import render_pdf
-from .schemas import ContractRequest, InvoiceRequest
+from .schemas import ContractRequest, InvoiceRequest, LedgerSyncRequest
 
 logger = logging.getLogger(__name__)
 production = os.getenv("ENVIRONMENT", "development").lower() == "production"
@@ -211,6 +211,7 @@ def create_invoice(request: InvoiceRequest, db: Session = Depends(get_db), idemp
     pdf = render_pdf("invoice.html", request_data)
     location = f"invoices/{pdf_filename(request.gatekeeper_project_id, request.project_name, 'invoice')}"
     document = Invoice(invoice_number=number, client_name=request.client_name, project_name=request.project_name, amount=request.amount,
+                       base_amount=request.original_amount or request.amount, outstanding_balance=request.amount,
                        client_email=request.client_email, gatekeeper_project_id=request.gatekeeper_project_id,
                        currency=request.currency, terms_json=json.dumps(request_data, default=str), pdf_path=location,
                        pdf_hash=hashlib.sha256(pdf).hexdigest(), idempotency_key=idempotency_key,
@@ -419,6 +420,8 @@ def record_gatekeeper_payment(payload: dict, db: Session = Depends(get_db), x_ga
     total_paid = existing_paid + paid_amount
     invoice_total = Decimal(str(invoice.amount)).quantize(Decimal("0.01"))
     total_paid = total_paid.quantize(Decimal("0.01"))
+    invoice.total_payments = total_paid
+    invoice.outstanding_balance = max(Decimal("0"), Decimal(str(invoice.base_amount or invoice.amount)) + Decimal(str(invoice.total_adjustments or 0)) - total_paid)
     invoice.status = "paid" if total_paid >= invoice_total else "partially_paid"
     invoice.paid_at = paid_at if invoice.status == "paid" else invoice.paid_at
     receipt_number = f"RCPT-{invoice.invoice_number}-{provider_reference[-8:]}"
@@ -440,6 +443,36 @@ def record_gatekeeper_payment(payload: dict, db: Session = Depends(get_db), x_ga
         delete_pdf(receipt_path)
         raise
     return {"invoice_number": invoice.invoice_number, "receipt_number": receipt_number, "status": invoice.status, "paid_at": invoice.paid_at, "idempotent": False}
+
+
+@app.post("/integrations/gatekeeper/ledger")
+def sync_gatekeeper_ledger(payload: LedgerSyncRequest, db: Session = Depends(get_db), x_gatekeeper_secret: str | None = Header(default=None)) -> dict:
+    expected = os.getenv("SCRIBED_INTEGRATION_SECRET")
+    if not expected or x_gatekeeper_secret != expected:
+        raise HTTPException(status_code=401, detail="Invalid integration secret")
+    invoice = db.query(Invoice).filter_by(gatekeeper_project_id=payload.project_id, archived_at=None).order_by(Invoice.created_at.desc()).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found for project")
+    if payload.currency.upper() != invoice.currency.upper():
+        raise HTTPException(status_code=409, detail="Ledger currency does not match the invoice")
+    calculated = payload.base_amount + payload.total_adjustments - payload.total_payments
+    if calculated < 0 or calculated.quantize(Decimal("0.01")) != payload.outstanding_balance.quantize(Decimal("0.01")):
+        raise HTTPException(status_code=409, detail="Ledger totals do not reconcile")
+    for adjustment in payload.adjustments:
+        if not db.query(InvoiceAdjustment).filter_by(gatekeeper_adjustment_id=adjustment.id).first():
+            db.add(InvoiceAdjustment(invoice_id=invoice.id, gatekeeper_adjustment_id=adjustment.id, type=adjustment.type,
+                                     amount=adjustment.amount, reason=adjustment.reason, actor=adjustment.actor,
+                                     created_at=datetime.now(timezone.utc)))
+    invoice.base_amount = payload.base_amount
+    invoice.total_adjustments = payload.total_adjustments
+    invoice.total_payments = payload.total_payments
+    invoice.outstanding_balance = payload.outstanding_balance
+    invoice.amount = payload.base_amount + payload.total_adjustments
+    invoice.status = "paid" if payload.outstanding_balance == 0 else ("partially_paid" if payload.total_payments > 0 else "sent")
+    db.commit()
+    audit(db, "ledger_synced", "invoice", invoice.invoice_number, f"base={payload.base_amount} adjustments={payload.total_adjustments} payments={payload.total_payments} outstanding={payload.outstanding_balance}")
+    db.commit()
+    return {"invoice_number": invoice.invoice_number, "status": invoice.status, "base_amount": str(invoice.base_amount), "total_adjustments": str(invoice.total_adjustments), "total_payments": str(invoice.total_payments), "outstanding_balance": str(invoice.outstanding_balance)}
 
 
 @app.get("/invoices/{document_id}/receipt", response_class=Response)
@@ -507,7 +540,4 @@ def mark_contract_accepted(document_id: int, db: Session = Depends(get_db)) -> d
 
 @app.post("/invoices/{document_id}/mark-paid")
 def mark_invoice_paid(document_id: int, db: Session = Depends(get_db)) -> dict:
-    document = db.get(Invoice, document_id)
-    if not document: raise HTTPException(status_code=404, detail="Invoice not found")
-    document.status = "paid"; document.paid_at = datetime.now(timezone.utc); db.commit()
-    return {"number": document.invoice_number, "status": document.status, "paid_at": document.paid_at}
+    raise HTTPException(status_code=410, detail="Invoices can only be marked paid by a tracked ledger payment event")
