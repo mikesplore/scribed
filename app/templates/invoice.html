@@ -210,12 +210,10 @@
           {% endfor %}
         {% else %}
         <tr>
-          <td>
-            {{ project_name }}
-            {% if description %}<div class="contact">{{ description }}</div>{% endif %}
-          </td>
-          <td class="amount-col">{{ "{:,.2f}".format(original_amount if amount_paid else amount) }}</td>
+          <td>{{ project_name }}{% if description %}<div class="contact">{{ description }}</div>{% endif %}</td>
+          <td class="amount-col">{{ "{:,.2f}".format(base_amount) }}</td>
         </tr>
+        {% for item in adjustments %}<tr><td>{{ item.label }}{% if item.reason %}<div class="contact">{{ item.reason }}</div>{% endif %}</td><td class="amount-col">{{ item.display_amount }}</td></tr>{% endfor %}
         {% endif %}
       </tbody>
     </table>
@@ -231,9 +229,10 @@
     {% endif %}
 
     <table class="summary"><tbody>
-      <tr><th>Subtotal</th><td>{{ "{:,.2f}".format(original_amount if amount_paid else amount) }}</td></tr>
+      <tr><th>Original charge</th><td>{{ "{:,.2f}".format(base_amount) }}</td></tr>
+      <tr><th>Adjustments</th><td>{{ "{:,.2f}".format(total_adjustments) }}</td></tr>
       <tr><th>Total paid</th><td>({{ total_paid }})</td></tr>
-      <tr class="balance"><th>Balance due ({{ currency }})</th><td>{{ "{:,.2f}".format(amount) }}</td></tr>
+      <tr class="balance"><th>Balance due ({{ currency }})</th><td>{{ "{:,.2f}".format(outstanding_balance) }}</td></tr>
     </tbody></table>
 
     {% if payment_instructions or payment_portal_url %}

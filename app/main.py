@@ -70,6 +70,20 @@ _requests: dict[str, deque[float]] = defaultdict(deque)
 def audit(db, action: str, kind: str, number: str, detail: str | None = None):
     db.add(AuditLog(action=action, document_type=kind, document_number=number, detail=detail))
 
+def refresh_invoice_pdf(db, invoice: Invoice) -> None:
+    adjustments = db.query(InvoiceAdjustment).filter_by(invoice_id=invoice.id).order_by(InvoiceAdjustment.created_at.asc()).all()
+    payments = db.query(Payment).filter_by(invoice_id=invoice.id).order_by(Payment.paid_at.asc()).all()
+    data = json.loads(invoice.terms_json or "{}")
+    data.update(invoice_number=invoice.invoice_number, client_name=invoice.client_name, project_name=invoice.project_name,
+                client_email=invoice.client_email, amount=invoice.amount, currency=invoice.currency, status=invoice.status,
+                base_amount=invoice.base_amount, total_adjustments=invoice.total_adjustments,
+                total_paid=invoice.total_payments, amount_paid=invoice.total_payments,
+                outstanding_balance=invoice.outstanding_balance,
+                adjustments=[{"label": "Additional charge" if item.type == "ADDITIONAL_CHARGE" else "Discount", "reason": item.reason, "display_amount": f"{'+' if item.type == 'ADDITIONAL_CHARGE' else '-'}{float(item.amount):,.2f}"} for item in adjustments],
+                payments=[{"amount": item.amount, "status": "success", "paidAt": item.paid_at} for item in payments])
+    pdf = render_pdf("invoice.html", data)
+    invoice.pdf_path = upload_pdf(f"invoices/{pdf_filename(invoice.gatekeeper_project_id, invoice.project_name, 'invoice')}", pdf)
+
 def fingerprint(payload: dict) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
 
@@ -469,6 +483,7 @@ def sync_gatekeeper_ledger(payload: LedgerSyncRequest, db: Session = Depends(get
     invoice.outstanding_balance = payload.outstanding_balance
     invoice.amount = payload.base_amount + payload.total_adjustments
     invoice.status = "paid" if payload.outstanding_balance == 0 else ("partially_paid" if payload.total_payments > 0 else "sent")
+    refresh_invoice_pdf(db, invoice)
     db.commit()
     audit(db, "ledger_synced", "invoice", invoice.invoice_number, f"version={payload.ledger_version} base={payload.base_amount} adjustments={payload.total_adjustments} payments={payload.total_payments} outstanding={payload.outstanding_balance}")
     db.commit()
