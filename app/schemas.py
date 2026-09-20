@@ -65,8 +65,17 @@ class LedgerSyncRequest(BaseModel):
     # Older Gatekeeper outbox events predate versioned ledger snapshots.
     ledger_version: str = Field(default="legacy-sync", min_length=1, max_length=128)
     base_amount: Decimal = Field(ge=0)
-    total_adjustments: Decimal
+    additional_charges: Decimal = Field(default=Decimal("0"), ge=0)
+    discounts: Decimal = Field(default=Decimal("0"), ge=0)
+    # Legacy Gatekeeper payloads supplied one net adjustment total.
+    total_adjustments: Decimal | None = Field(default=None)
     total_payments: Decimal = Field(ge=0)
     outstanding_balance: Decimal = Field(ge=0)
     currency: str = Field(min_length=3, max_length=3)
     adjustments: list[LedgerAdjustment] = Field(default_factory=list)
+
+    @property
+    def net_adjustments(self) -> Decimal:
+        if self.total_adjustments is not None:
+            return self.total_adjustments
+        return self.additional_charges - self.discounts

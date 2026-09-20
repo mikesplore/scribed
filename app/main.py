@@ -469,7 +469,8 @@ def sync_gatekeeper_ledger(payload: LedgerSyncRequest, db: Session = Depends(get
         raise HTTPException(status_code=404, detail="Invoice not found for project")
     if payload.currency.upper() != invoice.currency.upper():
         raise HTTPException(status_code=409, detail="Ledger currency does not match the invoice")
-    calculated = payload.base_amount + payload.total_adjustments - payload.total_payments
+    total_adjustments = payload.net_adjustments
+    calculated = payload.base_amount + total_adjustments - payload.total_payments
     if calculated < 0 or calculated.quantize(Decimal("0.01")) != payload.outstanding_balance.quantize(Decimal("0.01")):
         raise HTTPException(status_code=409, detail="Ledger totals do not reconcile")
     for adjustment in payload.adjustments:
@@ -478,14 +479,14 @@ def sync_gatekeeper_ledger(payload: LedgerSyncRequest, db: Session = Depends(get
                                      amount=adjustment.amount, reason=adjustment.reason, actor=adjustment.actor,
                                      created_at=datetime.now(timezone.utc)))
     invoice.base_amount = payload.base_amount
-    invoice.total_adjustments = payload.total_adjustments
+    invoice.total_adjustments = total_adjustments
     invoice.total_payments = payload.total_payments
     invoice.outstanding_balance = payload.outstanding_balance
-    invoice.amount = payload.base_amount + payload.total_adjustments
+    invoice.amount = payload.base_amount + total_adjustments
     invoice.status = "paid" if payload.outstanding_balance == 0 else ("partially_paid" if payload.total_payments > 0 else "sent")
     refresh_invoice_pdf(db, invoice)
     db.commit()
-    audit(db, "ledger_synced", "invoice", invoice.invoice_number, f"version={payload.ledger_version} base={payload.base_amount} adjustments={payload.total_adjustments} payments={payload.total_payments} outstanding={payload.outstanding_balance}")
+    audit(db, "ledger_synced", "invoice", invoice.invoice_number, f"version={payload.ledger_version} base={payload.base_amount} adjustments={total_adjustments} payments={payload.total_payments} outstanding={payload.outstanding_balance}")
     db.commit()
     return {"invoice_number": invoice.invoice_number, "status": invoice.status, "base_amount": str(invoice.base_amount), "total_adjustments": str(invoice.total_adjustments), "total_payments": str(invoice.total_payments), "outstanding_balance": str(invoice.outstanding_balance)}
 
