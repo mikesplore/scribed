@@ -69,7 +69,9 @@ class LedgerSyncRequest(BaseModel):
     discounts: Decimal = Field(default=Decimal("0"), ge=0)
     # Legacy Gatekeeper payloads supplied one net adjustment total.
     total_adjustments: Decimal | None = Field(default=None)
-    total_payments: Decimal = Field(ge=0)
+    successful_payments: Decimal = Field(default=Decimal("0"), ge=0)
+    # Legacy Gatekeeper payloads supplied this field name.
+    total_payments: Decimal | None = Field(default=None, ge=0)
     outstanding_balance: Decimal = Field(ge=0)
     currency: str = Field(min_length=3, max_length=3)
     adjustments: list[LedgerAdjustment] = Field(default_factory=list)
@@ -79,3 +81,9 @@ class LedgerSyncRequest(BaseModel):
         if self.total_adjustments is not None:
             return self.total_adjustments
         return self.additional_charges - self.discounts
+
+    @property
+    def net_payments(self) -> Decimal:
+        if self.total_payments is not None:
+            return self.total_payments
+        return self.successful_payments
