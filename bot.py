@@ -84,6 +84,11 @@ def api_error(response: httpx.Response) -> str:
                  response.request.url, response.status_code, response.text[:1000])
     return f"{status}: {str(detail)[:300]}"
 
+def gatekeeper_list_items(payload: object, key: str) -> list[dict]:
+    """Unwrap Gatekeeper paginated list responses while supporting legacy lists."""
+    items = payload.get(key, []) if isinstance(payload, dict) else payload
+    return [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+
 def response_filename(response: httpx.Response, fallback: str) -> str:
     match = re.search(r'filename="?([^";]+)', response.headers.get("content-disposition", ""), re.IGNORECASE)
     return match.group(1) if match else fallback
@@ -210,10 +215,7 @@ async def invoice_project_menu(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.message.reply_text("I couldn't reach Gatekeeper. Please try again shortly."); return
     if not response.is_success:
         await query.message.reply_text(f"Could not load Gatekeeper projects: {api_error(response)}"); return
-    payload = response.json()
-    items = payload.get("projects", []) if isinstance(payload, dict) else payload
-    if not isinstance(items, list):
-        items = []
+    items = gatekeeper_list_items(response.json(), "projects")
     kind = "contract" if query.data == "contract_projects" else "invoice"
     keyboard = [[InlineKeyboardButton(f"{x.get('name', x.get('slug', 'Project'))}", callback_data=f"project_document:{kind}:{x['slug']}")] for x in items]
     await query.message.reply_text(f"Choose a project for the {kind}:", reply_markup=InlineKeyboardMarkup(keyboard or [[InlineKeyboardButton("No projects found", callback_data="noop")]]))
@@ -395,8 +397,7 @@ async def delete_contract_menu(update: Update, context: ContextTypes.DEFAULT_TYP
     if not response.is_success:
         await update.callback_query.message.reply_text(f"Could not load contracts: {api_error(response)}")
         return
-    payload = response.json()
-    items = payload.get("projects", []) if isinstance(payload, dict) else payload
+    items = response.json()
     if not isinstance(items, list):
         items = []
     keyboard = [[InlineKeyboardButton(f"{x['number']} / {x['client_name']}", callback_data=f"delete_contract:{x['id']}")] for x in items]
@@ -427,7 +428,7 @@ async def delete_project_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not response.is_success:
         await target.reply_text(f"Could not load Gatekeeper projects: {api_error(response)}")
         return
-    items = response.json()
+    items = gatekeeper_list_items(response.json(), "projects")
     keyboard = [[InlineKeyboardButton(f"View project: {x['slug']}", callback_data=f"project:{x['slug']}")] for x in items]
     await target.reply_text("Select a Gatekeeper project to view:", reply_markup=InlineKeyboardMarkup(keyboard or [[InlineKeyboardButton("No projects found", callback_data="noop")]]))
 
