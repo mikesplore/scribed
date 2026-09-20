@@ -498,6 +498,19 @@ def get_invoice_receipt(document_id: int, db: Session = Depends(get_db)) -> Resp
     return _file_response(document.receipt_path, document.receipt_number or document.invoice_number)
 
 
+@app.get("/invoices/{document_id}/receipts")
+def list_invoice_receipts(document_id: int, db: Session = Depends(get_db)) -> list[dict]:
+    document = db.get(Invoice, document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    public_base = os.getenv("SCRIBED_PUBLIC_URL", "").rstrip("/")
+    return [{"id": item.id, "provider": item.provider, "provider_reference": item.provider_reference,
+             "amount": str(item.amount), "currency": item.currency, "paid_at": item.paid_at,
+             "receipt_number": item.receipt_number,
+             "receipt_url": f"{public_base}/payments/{item.id}/receipt" if public_base else f"/payments/{item.id}/receipt"}
+            for item in db.query(Payment).filter_by(invoice_id=document.id).order_by(Payment.paid_at.desc()).all()]
+
+
 @app.get("/payments/{payment_id}/receipt", response_class=Response)
 def get_payment_receipt(payment_id: int, db: Session = Depends(get_db)) -> Response:
     payment = db.get(Payment, payment_id)

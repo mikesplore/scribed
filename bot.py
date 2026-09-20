@@ -665,6 +665,10 @@ async def list_documents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 [InlineKeyboardButton("Archive contract", callback_data=f"doc_action:archive:{kind}:{item['id']}")],
             ]))
         else:
+            actions.extend([
+                InlineKeyboardButton("View PDF", callback_data=f"doc_action:view:{kind}:{item['id']}"),
+                InlineKeyboardButton("Receipts", callback_data=f"doc_action:receipts:{kind}:{item['id']}"),
+            ])
             await target.reply_text(label, reply_markup=InlineKeyboardMarkup([actions]))
 
 async def document_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -677,6 +681,10 @@ async def document_action(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     async with httpx.AsyncClient(base_url=API_URL, headers=API_HEADERS, timeout=HTTP_TIMEOUT) as api:
         if action == "status":
             response = await api.get(f"/documents/{number}")
+        elif action == "view":
+            response = await api.get(f"/{kind}/{document_id}")
+        elif action == "receipts":
+            response = await api.get(f"/invoices/{document_id}/receipts")
         elif action == "archive":
             response = await api.delete(f"/{kind}/{document_id}")
         else:
@@ -684,8 +692,19 @@ async def document_action(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not response.is_success:
         await query.message.reply_text(f"Could not {action} document: {api_error(response)}")
         return
-    if action in {"duplicate", "send"} and response.headers.get("content-type", "").startswith("application/pdf"):
+    if action in {"view", "duplicate", "send"} and response.headers.get("content-type", "").startswith("application/pdf"):
         await query.message.reply_document(InputFile(response.content, filename=response_filename(response, f"{action}.pdf")), caption="Done.")
+    elif action == "receipts":
+        receipts = response.json()
+        if not receipts:
+            await query.message.reply_text("No receipts recorded for this invoice.")
+        else:
+            for receipt in receipts:
+                receipt_response = await api.get(f"/payments/{receipt['id']}/receipt")
+                if receipt_response.is_success:
+                    await query.message.reply_document(InputFile(receipt_response.content, filename=f"{receipt['receipt_number']}.pdf"), caption=f"{receipt['receipt_number']} — {receipt['amount']} {receipt['currency']}")
+                else:
+                    await query.message.reply_text(f"Could not load receipt {receipt['receipt_number']}: {api_error(receipt_response)}")
     else:
         await query.message.reply_text(friendly_json(response, "completed"))
 
@@ -751,7 +770,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("archive", archive_project))
     app.add_handler(CommandHandler("projects", delete_project_menu))
     app.add_handler(CallbackQueryHandler(list_documents, pattern="^list_(contracts|invoices)$"))
-    app.add_handler(CallbackQueryHandler(document_action, pattern="^doc_action:(status|send|duplicate|archive):"))
+    app.add_handler(CallbackQueryHandler(document_action, pattern="^doc_action:(status|send|duplicate|archive|view|receipts):"))
     app.add_handler(CommandHandler("send", transition))
     app.add_handler(CommandHandler("accepted", transition))
     app.add_handler(CommandHandler("paid", transition))
