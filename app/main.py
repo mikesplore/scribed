@@ -337,13 +337,14 @@ def gatekeeper_invoice_status(gatekeeper_project_id: str, db: Session = Depends(
         raise HTTPException(status_code=404, detail="Invoice not found for project")
     payments = db.query(Payment).filter_by(invoice_id=invoice.id).order_by(Payment.paid_at.desc()).all()
     paid = sum((Decimal(str(item.amount)) for item in payments), Decimal("0"))
+    public_base = os.getenv("SCRIBED_PUBLIC_URL", "").rstrip("/")
     return {
         "invoice": {"id": invoice.id, "number": invoice.invoice_number, "status": invoice.status,
                     "amount": str(invoice.amount), "currency": invoice.currency,
                     "paid": str(paid), "balance": str(max(Decimal("0"), Decimal(str(invoice.amount)) - paid))},
         "payments": [{"id": item.id, "provider": item.provider, "provider_reference": item.provider_reference,
                       "amount": str(item.amount), "currency": item.currency, "paid_at": item.paid_at,
-                      "receipt_number": item.receipt_number, "receipt_url": f"/payments/{item.id}/receipt"} for item in payments]
+                      "receipt_number": item.receipt_number, "receipt_url": f"{public_base}/payments/{item.id}/receipt" if public_base else f"/payments/{item.id}/receipt"} for item in payments]
     }
 
 
