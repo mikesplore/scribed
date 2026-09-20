@@ -327,6 +327,26 @@ def list_invoices(db: Session = Depends(get_db)) -> list[dict]:
             for item in db.query(Invoice).filter_by(archived_at=None).order_by(Invoice.created_at.desc()).all()]
 
 
+@app.get("/integrations/gatekeeper/invoices/{gatekeeper_project_id}")
+def gatekeeper_invoice_status(gatekeeper_project_id: str, db: Session = Depends(get_db), x_gatekeeper_secret: str | None = Header(default=None)) -> dict:
+    expected = os.getenv("SCRIBED_INTEGRATION_SECRET")
+    if not expected or x_gatekeeper_secret != expected:
+        raise HTTPException(status_code=401, detail="Invalid integration secret")
+    invoice = db.query(Invoice).filter_by(gatekeeper_project_id=gatekeeper_project_id, archived_at=None).order_by(Invoice.created_at.desc()).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found for project")
+    payments = db.query(Payment).filter_by(invoice_id=invoice.id).order_by(Payment.paid_at.desc()).all()
+    paid = sum((Decimal(str(item.amount)) for item in payments), Decimal("0"))
+    return {
+        "invoice": {"id": invoice.id, "number": invoice.invoice_number, "status": invoice.status,
+                    "amount": str(invoice.amount), "currency": invoice.currency,
+                    "paid": str(paid), "balance": str(max(Decimal("0"), Decimal(str(invoice.amount)) - paid))},
+        "payments": [{"id": item.id, "provider": item.provider, "provider_reference": item.provider_reference,
+                      "amount": str(item.amount), "currency": item.currency, "paid_at": item.paid_at,
+                      "receipt_number": item.receipt_number, "receipt_url": f"/payments/{item.id}/receipt"} for item in payments]
+    }
+
+
 @app.get("/audit/{number}")
 def document_audit(number: str, db: Session = Depends(get_db)) -> list[dict]:
     return [{"action": item.action, "type": item.document_type, "number": item.document_number,
