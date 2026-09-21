@@ -397,10 +397,22 @@ def record_gatekeeper_suspension(payload: dict, db: Session = Depends(get_db), x
     expected = os.getenv("SCRIBED_INTEGRATION_SECRET")
     if not expected or x_gatekeeper_secret != expected: raise HTTPException(status_code=401, detail="Invalid integration secret")
     project_id = str(payload.get("project_id", ""))
-    document = db.query(Contract).filter_by(gatekeeper_project_id=project_id).order_by(Contract.created_at.desc()).first()
-    if not document: raise HTTPException(status_code=404, detail="Contract not found for project")
-    return {"contract_number": document.contract_number, "action": "suspension_recorded",
-            "reason": payload.get("reason", "Gatekeeper project suspended")}
+    if not project_id:
+        raise HTTPException(status_code=422, detail="project_id is required")
+
+    # A suspension is an operational event, not a contract-only event. Projects
+    # can be blocked before a contract is created, so do not reject the event
+    # merely because the optional contract link is absent.
+    contract = db.query(Contract).filter_by(gatekeeper_project_id=project_id).order_by(Contract.created_at.desc()).first()
+    invoice = db.query(Invoice).filter_by(gatekeeper_project_id=project_id, archived_at=None).order_by(Invoice.created_at.desc()).first()
+    document_type = "contract" if contract else "invoice" if invoice else "project"
+    document_number = contract.contract_number if contract else invoice.invoice_number if invoice else project_id
+    reason = payload.get("reason", "Gatekeeper project suspended")
+    audit(db, "suspension_recorded", document_type, document_number, str(reason))
+    db.commit()
+    return {"contract_number": contract.contract_number if contract else None,
+            "invoice_number": invoice.invoice_number if invoice else None,
+            "action": "suspension_recorded", "reason": reason}
 
 
 @app.post("/integrations/gatekeeper/payments")
