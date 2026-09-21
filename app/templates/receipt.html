@@ -1,1 +1,161 @@
-<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:sans-serif;color:#243447;margin:48px}h1{color:#176b87}.row{margin:12px 0}.label{color:#657786;font-size:12px;text-transform:uppercase}.value{font-size:18px}.paid{color:#188038;font-weight:bold}</style></head><body><h1>Payment Receipt</h1><div class="row"><div class="label">Receipt number</div><div class="value">{{ receipt_number }}</div></div><div class="row"><div class="label">Invoice</div><div class="value">{{ invoice_number }}</div></div><div class="row"><div class="label">Client / Project</div><div class="value">{{ client_name }} — {{ project_name }}</div></div><div class="row"><div class="label">Payment provider</div><div class="value">{{ provider|upper }}</div></div><div class="row"><div class="label">Transaction reference</div><div class="value">{{ provider_reference }}</div></div><div class="row"><div class="label">Paid on</div><div class="value">{{ paid_at }}</div></div><div class="row"><div class="label">Amount</div><div class="value paid">{{ currency }} {{ amount }}</div></div><p class="paid">Payment received</p><p>Issued by mikesplore.</p></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Payment Receipt — {{ receipt_number }}</title>
+  <style>
+    :root {
+      --bg-color: #0f172a;
+      --card-bg: #1e293b;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --accent: #38bdf8;
+      --success: #22c55e;
+      --border: #334155;
+    }
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-main);
+      margin: 0;
+      padding: 40px 20px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+    }
+    .receipt-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      width: 100%;
+      max-width: 480px;
+      padding: 32px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 20px;
+      margin-bottom: 24px;
+    }
+    h1 {
+      font-size: 20px;
+      font-weight: 600;
+      color: var(--text-main);
+      margin: 0 0 4px 0;
+    }
+    .badge {
+      background: rgba(34, 197, 94, 0.15);
+      color: var(--success);
+      font-size: 12px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 20px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .row {
+      margin-bottom: 16px;
+    }
+    .row.full {
+      grid-column: span 2;
+    }
+    .label {
+      color: var(--text-muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 4px;
+    }
+    .value {
+      font-size: 15px;
+      font-weight: 500;
+      color: var(--text-main);
+      word-break: break-all;
+    }
+    .amount-box {
+      background: rgba(56, 189, 248, 0.05);
+      border: 1px dashed var(--accent);
+      border-radius: 8px;
+      padding: 16px;
+      text-align: center;
+      margin-top: 24px;
+      margin-bottom: 24px;
+    }
+    .amount-box .label {
+      margin-bottom: 6px;
+    }
+    .amount-box .value {
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--accent);
+    }
+    .footer {
+      text-align: center;
+      border-top: 1px solid var(--border);
+      padding-top: 16px;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="receipt-card">
+    <div class="header">
+      <div>
+        <h1>Payment Receipt</h1>
+        <div class="value" style="font-size: 13px; color: #94a3b8;">Ref: {{ receipt_number }}</div>
+      </div>
+      <span class="badge">Paid</span>
+    </div>
+
+    <div class="grid">
+      <div class="row">
+        <div class="label">Invoice</div>
+        <div class="value">{{ invoice_number }}</div>
+      </div>
+      <div class="row">
+        <div class="label">Paid On</div>
+        <div class="value">{{ paid_at }}</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="label">Client / Project</div>
+      <div class="value">{{ client_name }} — {{ project_name }}</div>
+    </div>
+
+    <div class="grid" style="margin-top: 16px;">
+      <div class="row">
+        <div class="label">Provider</div>
+        <div class="value" style="text-transform: uppercase;">{{ provider }}</div>
+      </div>
+      <div class="row">
+        <div class="label">Transaction Reference</div>
+        <div class="value">{{ provider_reference }}</div>
+      </div>
+    </div>
+
+    <div class="amount-box">
+      <div class="label">Total Amount Paid</div>
+      <div class="value">{{ currency }} {{ amount }}</div>
+    </div>
+
+    <div class="footer">
+      Issued securely by mikesplore
+    </div>
+  </div>
+
+</body>
+</html>
