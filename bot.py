@@ -200,7 +200,9 @@ async def invoice_project_menu(update: Update, context: ContextTypes.DEFAULT_TYP
     if not owner_only(update): return
     query = update.callback_query
     await query.answer()
-    missing = [key for key in ("GATEKEEPER_BASE_URL", "GATEKEEPER_EMAIL", "GATEKEEPER_PASSWORD") if not os.getenv(key)]
+    gatekeeper_email = os.getenv("GATEKEEPER_EMAIL") or os.getenv("GATEKEEPER_ADMIN_EMAIL")
+    gatekeeper_password = os.getenv("GATEKEEPER_PASSWORD") or os.getenv("GATEKEEPER_ADMIN_PASSWORD")
+    missing = [key for key, value in (("GATEKEEPER_BASE_URL", os.getenv("GATEKEEPER_BASE_URL")), ("GATEKEEPER_EMAIL", gatekeeper_email), ("GATEKEEPER_PASSWORD", gatekeeper_password)) if not value]
     if missing:
         await query.message.reply_text(f"Gatekeeper is not configured. Missing: {', '.join(missing)}")
         return
@@ -415,11 +417,15 @@ async def delete_project_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     try:
         async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as api:
-            login = await api.post(os.environ["GATEKEEPER_BASE_URL"].rstrip("/") + "/api/auth/login", json={"email": os.environ["GATEKEEPER_EMAIL"], "password": os.environ["GATEKEEPER_PASSWORD"]})
+            login = await api.post(os.environ["GATEKEEPER_BASE_URL"].rstrip("/") + "/api/auth/login", json={"email": gatekeeper_email, "password": gatekeeper_password})
             if not login.is_success:
                 await target.reply_text(f"Gatekeeper login failed: {api_error(login)}")
                 return
-            token = login.json()["token"]
+            token = login.json().get("token")
+            if not isinstance(token, str) or not token.strip():
+                logger.error("Gatekeeper login succeeded without a token: %s", login.text[:500])
+                await target.reply_text("Gatekeeper authentication returned no token. Check the login response and configured credentials.")
+                return
             response = await api.get(os.environ["GATEKEEPER_BASE_URL"].rstrip("/") + "/api/admin/projects", headers={"Authorization": f"Bearer {token}"})
     except httpx.RequestError:
         logger.exception("Gatekeeper request failed")
