@@ -411,7 +411,9 @@ async def delete_project_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
     if query:
         await query.answer()
     target = query.message if query else update.message
-    missing = [key for key in ("GATEKEEPER_BASE_URL", "GATEKEEPER_EMAIL", "GATEKEEPER_PASSWORD") if not os.getenv(key)]
+    gatekeeper_email = os.getenv("GATEKEEPER_EMAIL") or os.getenv("GATEKEEPER_ADMIN_EMAIL")
+    gatekeeper_password = os.getenv("GATEKEEPER_PASSWORD") or os.getenv("GATEKEEPER_ADMIN_PASSWORD")
+    missing = [key for key, value in (("GATEKEEPER_BASE_URL", os.getenv("GATEKEEPER_BASE_URL")), ("GATEKEEPER_EMAIL", gatekeeper_email), ("GATEKEEPER_PASSWORD", gatekeeper_password)) if not value]
     if missing:
         await target.reply_text(f"Gatekeeper is not configured. Missing: {', '.join(missing)}")
         return
