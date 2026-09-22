@@ -1,5 +1,4 @@
 from pathlib import Path
-import os
 from datetime import datetime
 from markupsafe import escape
 from typing import Any
@@ -72,10 +71,10 @@ def render_pdf(template_name: str, fields: dict[str, Any]) -> bytes:
         render_fields["total_paid"] = f"{float(render_fields.get('amount_paid') or 0):,.2f}"
     except (TypeError, ValueError):
         render_fields["total_paid"] = "0.00"
-    public_url = os.getenv("R2_PUBLIC_URL", "").rstrip("/")
+    bundled_logo = TEMPLATE_DIR / "ScribedLogo.png"
     render_fields.setdefault(
         "logo_url",
-        f"https://i.ibb.co/ymbBfLfs/logocool.png",
+        bundled_logo.as_uri() if bundled_logo.is_file() else "",
     )
     html = template.render(**render_fields)
     # Keep the fixed verification strip clear of the final page's content.

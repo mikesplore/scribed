@@ -1,161 +1,214 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Payment Receipt — {{ receipt_number }}</title>
-  <style>
-    :root {
-      --bg-color: #0f172a;
-      --card-bg: #1e293b;
-      --text-main: #f8fafc;
-      --text-muted: #94a3b8;
-      --accent: #38bdf8;
-      --success: #22c55e;
-      --border: #334155;
-    }
-    body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background-color: var(--bg-color);
-      color: var(--text-main);
-      margin: 0;
-      padding: 40px 20px;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 100vh;
-    }
-    .receipt-card {
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      width: 100%;
-      max-width: 480px;
-      padding: 32px;
-      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
-    }
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      border-bottom: 1px solid var(--border);
-      padding-bottom: 20px;
-      margin-bottom: 24px;
-    }
-    h1 {
-      font-size: 20px;
-      font-weight: 600;
-      color: var(--text-main);
-      margin: 0 0 4px 0;
-    }
-    .badge {
-      background: rgba(34, 197, 94, 0.15);
-      color: var(--success);
-      font-size: 12px;
-      font-weight: 600;
-      padding: 4px 10px;
-      border-radius: 20px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    .grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 16px;
-      margin-bottom: 20px;
-    }
-    .row {
-      margin-bottom: 16px;
-    }
-    .row.full {
-      grid-column: span 2;
-    }
-    .label {
-      color: var(--text-muted);
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.8px;
-      margin-bottom: 4px;
-    }
-    .value {
-      font-size: 15px;
-      font-weight: 500;
-      color: var(--text-main);
-      word-break: break-all;
-    }
-    .amount-box {
-      background: rgba(56, 189, 248, 0.05);
-      border: 1px dashed var(--accent);
-      border-radius: 8px;
-      padding: 16px;
-      text-align: center;
-      margin-top: 24px;
-      margin-bottom: 24px;
-    }
-    .amount-box .label {
-      margin-bottom: 6px;
-    }
-    .amount-box .value {
-      font-size: 24px;
-      font-weight: 700;
-      color: var(--accent);
-    }
-    .footer {
-      text-align: center;
-      border-top: 1px solid var(--border);
-      padding-top: 16px;
-      color: var(--text-muted);
-      font-size: 12px;
-    }
-  </style>
+<meta charset="UTF-8">
+<title>Receipt {{ receipt_number }}</title>
+<style>
+  :root{
+    --ink:#1b1b18;
+    --muted:#6b6a63;
+    --hairline:#dcdad2;
+    --paper:#ffffff;
+    --accent:#1f4b43;
+    --font-serif: 'Source Serif 4', ui-serif, Georgia, 'Times New Roman', serif;
+    --font-sans: 'Public Sans', 'IBM Plex Sans', -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+    --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  }
+
+  @page { size: A4; margin: 24mm 20mm 42mm 20mm; }
+  @page { @bottom-right { content: counter(page) " of " counter(pages); font: 8pt var(--font-mono); color: var(--muted); } }
+  * { box-sizing: border-box; }
+
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:var(--font-sans);
+    font-size:10.5pt;
+    line-height:1.5;
+  }
+
+  .topbar{ position:fixed; top:0; left:0; right:0; height:3px; background:var(--ink); }
+
+  .watermark{
+    position:fixed;
+    top:48%; left:50%;
+    transform:translate(-50%,-50%) rotate(-28deg);
+    font-family:var(--font-serif);
+    font-size:86pt;
+    font-weight:700;
+    letter-spacing:0.06em;
+    color:var(--accent);
+    opacity:0.06;
+    z-index:0;
+    white-space:nowrap;
+    pointer-events:none;
+  }
+
+  .sheet{ position:relative; z-index:1; max-width: 720px; margin: 0 auto; padding: 36px 4px; }
+
+  /* ---- Header ---- */
+  .masthead{
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    gap:24px;
+    padding-bottom:18px;
+    border-bottom:1px solid var(--hairline);
+  }
+  .brand-mark{ font-family:var(--font-serif); font-size:18pt; font-weight:600; letter-spacing:0.01em; }
+  .brand-logo{ max-height:52px; max-width:200px; width:auto; height:auto; display:block; }
+
+  .doc-meta{ text-align:right; min-width:190px; }
+  .doc-title{ font-family:var(--font-serif); font-size:15pt; letter-spacing:-0.01em; margin:0 0 8px; }
+  .meta-row{ display:flex; justify-content:flex-end; gap:8px; font-size:9pt; color:var(--muted); white-space:nowrap; }
+  .meta-row + .meta-row{ margin-top:3px; }
+  .meta-row .val{ font-family:var(--font-mono); color:var(--ink); min-width:108px; text-align:right; }
+
+  .status-badge{
+    display:inline-block;
+    margin-top:10px;
+    padding:2px 10px;
+    font-size:8.5pt;
+    font-weight:600;
+    letter-spacing:0.04em;
+    text-transform:uppercase;
+    border:1px solid var(--accent);
+    color:var(--accent);
+  }
+
+  /* ---- Parties ---- */
+  .parties{ padding:20px 0 22px; border-bottom:1px solid var(--hairline); }
+  .parties .label{ color:var(--muted); font-size:8.5pt; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:6px; }
+  .parties .name{ font-weight:600; }
+  .parties .contact{ color:var(--muted); font-size:9.5pt; }
+  .party-grid{ display:flex; justify-content:space-between; gap:40px; }
+
+  /* ---- Ledger: what was paid ---- */
+  table.items{ width:100%; border-collapse:collapse; table-layout:fixed; margin-top:22px; }
+  table.items colgroup .col-desc{ width:72%; }
+  table.items colgroup .col-amount{ width:28%; }
+  table.items thead th{
+    text-align:left;
+    font-weight:600;
+    color:var(--muted);
+    font-size:8.5pt;
+    text-transform:uppercase;
+    letter-spacing:0.05em;
+    padding:0 0 8px;
+    border-bottom:1.5px solid var(--ink);
+  }
+  table.items thead th.amount-col{ text-align:right; }
+  table.items tbody td{
+    padding:12px 0;
+    border-bottom:1px solid var(--hairline);
+    vertical-align:top;
+    overflow-wrap:break-word;
+  }
+  table.items tbody td.amount-col{
+    text-align:right;
+    font-family:var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    white-space:nowrap;
+    padding-left:16px;
+  }
+  table.items tbody td .contact{ margin-top:2px; }
+
+  /* ---- Summary (ledger totals) ---- */
+  table.summary{ width:100%; border-collapse:collapse; margin-top:20px; margin-left:auto; max-width:340px; }
+  table.summary th, table.summary td{ padding:6px 0; text-align:right; font-size:9.5pt; }
+  table.summary th{ text-align:left; font-weight:500; color:var(--muted); }
+  table.summary td{ font-family:var(--font-mono); font-variant-numeric: tabular-nums; overflow-wrap:break-word; word-break:break-all; max-width:200px; }
+  table.summary .total{ border-top:3px double var(--ink); }
+  table.summary .total th{ padding-top:12px; font-weight:700; color:var(--ink); font-size:10.5pt; }
+  table.summary .total td{ padding-top:12px; color:var(--accent); font-size:15pt; font-weight:700; letter-spacing:-0.01em; }
+
+  /* ---- Footer / verification strip ---- */
+  .verify{
+    position:fixed;
+    bottom:10mm; left:20mm; right:20mm;
+    z-index:1;
+    display:flex; align-items:center; justify-content:space-between;
+    padding-top:10px;
+    border-top:1px solid var(--hairline);
+    font-family:var(--font-mono);
+    font-size:8pt;
+    color:var(--muted);
+  }
+  .verify-left{ display:flex; align-items:center; gap:8px; }
+  .verify-left img{ width:32px; height:32px; }
+</style>
 </head>
 <body>
+  <div class="topbar"></div>
+  <div class="watermark">PAID</div>
 
-  <div class="receipt-card">
-    <div class="header">
+  <div class="sheet">
+
+    <header class="masthead">
       <div>
-        <h1>Payment Receipt</h1>
-        <div class="value" style="font-size: 13px; color: #94a3b8;">Ref: {{ receipt_number }}</div>
+        {% if logo_url %}
+          <img src="{{ logo_url }}" class="brand-logo" alt="{{ from_name|default('mikesplore') }}">
+        {% else %}
+          <div class="brand-mark">{{ from_name|default('mikesplore') }}</div>
+        {% endif %}
       </div>
-      <span class="badge">Paid</span>
-    </div>
+      <div class="doc-meta">
+        <p class="doc-title">Receipt</p>
+        <div class="meta-row"><span>Receipt no.</span><span class="val">{{ receipt_number }}</span></div>
+        <div class="meta-row"><span>Invoice</span><span class="val">{{ invoice_number }}</span></div>
+        <div class="meta-row"><span>Paid on</span><span class="val">{{ paid_at }}</span></div>
+        <span class="status-badge">Paid</span>
+      </div>
+    </header>
 
-    <div class="grid">
-      <div class="row">
-        <div class="label">Invoice</div>
-        <div class="value">{{ invoice_number }}</div>
+    <section class="parties"><div class="party-grid">
+      <div>
+        <div class="label">From</div>
+        <div class="name">{{ from_name|default('mikesplore') }}</div>
+        <div class="contact">{{ from_tagline|default('Independent digital work') }}</div>
+        {% if from_address %}<div class="contact">{{ from_address }}</div>{% endif %}
+        {% if from_phone %}<div class="contact">{{ from_phone }}</div>{% endif %}
       </div>
-      <div class="row">
-        <div class="label">Paid On</div>
-        <div class="value">{{ paid_at }}</div>
-      </div>
-    </div>
-
-    <div class="row">
-      <div class="label">Client / Project</div>
-      <div class="value">{{ client_name }} — {{ project_name }}</div>
-    </div>
-
-    <div class="grid" style="margin-top: 16px;">
-      <div class="row">
-        <div class="label">Provider</div>
-        <div class="value" style="text-transform: uppercase;">{{ provider }}</div>
-      </div>
-      <div class="row">
-        <div class="label">Transaction Reference</div>
-        <div class="value">{{ provider_reference }}</div>
+      <div>
+        <div class="label">Paid by</div>
+        <div class="name">{{ client_name }}</div>
+        {% if project_name %}<div class="contact">{{ project_name }}</div>{% endif %}
       </div>
     </div>
+    </section>
 
-    <div class="amount-box">
-      <div class="label">Total Amount Paid</div>
-      <div class="value">{{ currency }} {{ amount }}</div>
-    </div>
+    <table class="items">
+      <colgroup><col class="col-desc"><col class="col-amount"></colgroup>
+      <thead>
+        <tr>
+          <th>Description</th>
+          <th class="amount-col">Amount ({{ currency }})</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>
+            {{ project_name }}
+            <div class="contact">Payment against invoice {{ invoice_number }}</div>
+          </td>
+          <td class="amount-col">{{ amount }}</td>
+        </tr>
+      </tbody>
+    </table>
 
-    <div class="footer">
-      Issued securely by mikesplore
-    </div>
+    <table class="summary"><tbody>
+      <tr><th>Provider</th><td>{{ provider|upper }}</td></tr>
+      <tr><th>Transaction ref.</th><td>{{ provider_reference }}</td></tr>
+      <tr class="total"><th>Amount received ({{ currency }})</th><td>{{ amount }}</td></tr>
+    </tbody></table>
+
   </div>
 
+  <div class="verify">
+    <div class="verify-left">
+      <span>Issued by {{ from_name|default('mikesplore') }} &middot; verify at scribed.mikesplore.me/verify/{{ receipt_number }}</span>
+    </div>
+  </div>
 </body>
 </html>

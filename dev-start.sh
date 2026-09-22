@@ -7,7 +7,7 @@ if [ -f .env ]; then
   set +a
 fi
 
-PORT="${PORT:-8000}"
+PORT="${PORT:-8001}"
 
 echo "Running database migrations..."
 .venv/bin/alembic upgrade head

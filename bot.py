@@ -37,7 +37,7 @@ for handler in logging.getLogger().handlers:
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
-API_URL = os.getenv("SCRIBED_API_URL", "http://localhost:8000").rstrip("/")
+API_URL = os.getenv("SCRIBED_API_URL", "http://localhost:8001").rstrip("/")
 OWNER_ID = int(os.environ["TELEGRAM_OWNER_ID"])
 API_HEADERS = {"Authorization": f"Bearer {os.environ['SCRIBED_API_TOKEN']}"}
 HTTP_TIMEOUT = httpx.Timeout(20.0)

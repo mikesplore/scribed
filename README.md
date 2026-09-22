@@ -28,7 +28,7 @@ For local development, start both processes together with:
 ./dev-start.sh
 ```
 
-The API uses port `8000` by default; set `PORT` to change it. The Telegram bot
+The API uses port `8001` by default; set `PORT` to change it. The Telegram bot
 webhook is served by the same FastAPI process and port. Route the configured
 webhook URL and path to the API through the reverse proxy.
 
@@ -41,7 +41,7 @@ cp .env.example .env
 
 Scribed loads variables from `.env` automatically. Do not commit `.env`.
 
-The API documentation is at <http://localhost:8000/docs> locally, or at <https://scribed.mikesplore.me/docs> in production. The default SQLite database and `storage/` directory are created automatically.
+The API documentation is at <http://localhost:8001/docs> locally, or at <https://scribed.mikesplore.me/docs> in production. The default SQLite database and `storage/` directory are created automatically.
 
 In Docker, database migrations run automatically before the API and Telegram bot
 start (`alembic upgrade head`). Set `DATABASE_URL` in the container environment
