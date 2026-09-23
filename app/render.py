@@ -1,5 +1,6 @@
 from pathlib import Path
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from markupsafe import escape
 from typing import Any
 
@@ -15,6 +16,13 @@ environment = Environment(
     autoescape=select_autoescape(("html", "xml")),
     undefined=StrictUndefined,
 )
+
+
+def _decimal_value(value: Any, field: str) -> Decimal:
+    try:
+        return Decimal(str(value if value is not None else 0))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError(f"{field} must be numeric") from exc
 
 
 def render_pdf(template_name: str, fields: dict[str, Any]) -> bytes:
@@ -33,6 +41,8 @@ def render_pdf(template_name: str, fields: dict[str, Any]) -> bytes:
     render_fields["base_amount"] = render_fields.get("base_amount") or render_fields.get("original_amount") or render_fields.get("amount", 0)
     render_fields.setdefault("total_adjustments", 0)
     render_fields.setdefault("outstanding_balance", render_fields.get("amount", 0))
+    for field in ("base_amount", "total_adjustments", "outstanding_balance"):
+        render_fields[field] = _decimal_value(render_fields[field], field)
     render_fields.setdefault("payment_portal_url", None)
     render_fields.setdefault("status", None)
     render_fields.setdefault("from_address", "Leisure, Mombasa, 80100")
@@ -44,6 +54,11 @@ def render_pdf(template_name: str, fields: dict[str, Any]) -> bytes:
     client_name = str(render_fields.get("client_name", "")).strip()
     render_fields.setdefault("client_first_name", client_name.split()[0] if client_name else "Client")
     render_fields.setdefault("items", None)
+    if render_fields["items"]:
+        render_fields["items"] = [
+            {**item, "amount": _decimal_value(item.get("amount"), "item amount")}
+            for item in render_fields["items"]
+        ]
     render_fields.setdefault("invoice_notes", None)
     for field in ("issue_date", "due_date"):
         value = render_fields.get(field)
