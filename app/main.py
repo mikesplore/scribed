@@ -528,6 +528,8 @@ def record_gatekeeper_payment(payload: dict, db: Session = Depends(get_db), x_ga
         db.add(Payment(invoice_id=invoice.id, provider=provider, provider_reference=provider_reference, amount=paid_amount, currency=currency, paid_at=paid_at, receipt_number=receipt_number, receipt_path=receipt_path, idempotency_key=idempotency_key))
         invoice.receipt_number = receipt_number
         invoice.receipt_path = receipt_path
+        db.flush()
+        refresh_invoice_pdf(db, invoice)
         existing_detail = f"provider_reference={provider_reference}"
         audit(db, "payment_received", "invoice", invoice.invoice_number, existing_detail)
         db.commit()

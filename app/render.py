@@ -82,8 +82,11 @@ def render_pdf(template_name: str, fields: dict[str, Any]) -> bytes:
             item["display_amount"] = "0.00"
         normalized_payments.append(item)
     render_fields["payments"] = normalized_payments
+    paid_value = render_fields.get("total_paid")
+    if paid_value is None:
+        paid_value = render_fields.get("amount_paid") or 0
     try:
-        render_fields["total_paid"] = f"{float(render_fields.get('amount_paid') or 0):,.2f}"
+        render_fields["total_paid"] = f"{float(paid_value or 0):,.2f}"
     except (TypeError, ValueError):
         render_fields["total_paid"] = "0.00"
     bundled_logo = TEMPLATE_DIR / "ScribedLogo.png"
