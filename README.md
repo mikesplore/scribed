@@ -82,8 +82,10 @@ Resend delivery requires `RESEND_API_KEY` and `RESEND_FROM_EMAIL`.
 ## Gatekeeperd integration
 
 Contracts can store a Gatekeeperd project UUID in `gatekeeper_project_id`. Gatekeeperd can retrieve the linked contract at `GET /contracts/by-project/{id}` and notify Scribed of a suspension at `POST /integrations/gatekeeper/suspensions` using `X-Gatekeeper-Secret`.
-Gatekeeperd can notify Scribed of a verified payment at `POST /integrations/gatekeeper/payments`; Scribed marks the linked invoice paid and records the provider reference idempotently.
-Receipts are persisted and can be retrieved by authenticated clients at `GET /invoices/{id}/receipt` after payment confirmation.
+
+Gatekeeperd first calls `POST /integrations/gatekeeper/invoices/ensure` to create or link an invoice for the project. This makes a new, otherwise empty Scribed database usable without manually creating the invoice first. Existing invoices are linked by Gatekeeper project ID or, when unlinked, by project name; an invoice already linked to a different project is rejected. Then Gatekeeperd synchronizes the project ledger and sends verified payments to `POST /integrations/gatekeeper/payments`; Scribed records each provider reference idempotently and generates a receipt. `GET /integrations/gatekeeper/invoices/{project_id}` returns the invoice and recorded payments. Gatekeeperd can also replay the ledger and successful payments to recover missed integration deliveries.
+
+Receipts are persisted and can be retrieved at `GET /payments/{payment_id}/receipt`; invoice PDFs are available at `GET /invoices/{invoice_id}`. These routes require the API bearer token. Integration routes also require the matching `X-Gatekeeper-Secret`.
 
 Configure `SCRIBED_CALLBACK_URL` and `SCRIBED_INTEGRATION_SECRET` in Gatekeeperd, with the matching secret in Scribed.
 

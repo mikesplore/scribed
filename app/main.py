@@ -343,6 +343,61 @@ def list_invoices(db: Session = Depends(get_db)) -> list[dict]:
             for item in db.query(Invoice).filter_by(archived_at=None).order_by(Invoice.created_at.desc()).all()]
 
 
+@app.post("/integrations/gatekeeper/invoices/ensure")
+def ensure_gatekeeper_invoice(request: InvoiceRequest, db: Session = Depends(get_db),
+                              x_gatekeeper_secret: str | None = Header(default=None),
+                              idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict:
+    expected = os.getenv("SCRIBED_INTEGRATION_SECRET")
+    if not expected or x_gatekeeper_secret != expected:
+        raise HTTPException(status_code=401, detail="Invalid integration secret")
+    project_id = request.gatekeeper_project_id
+    if not project_id:
+        raise HTTPException(status_code=422, detail="gatekeeper_project_id is required")
+
+    invoice = db.query(Invoice).filter_by(gatekeeper_project_id=project_id, archived_at=None).order_by(Invoice.created_at.desc()).first()
+    if not invoice:
+        invoice = db.query(Invoice).filter(
+            func.lower(func.trim(Invoice.project_name)) == request.project_name.strip().lower(),
+            Invoice.archived_at.is_(None),
+        ).order_by(Invoice.created_at.desc()).first()
+        if invoice and invoice.gatekeeper_project_id not in (None, project_id):
+            raise HTTPException(status_code=409, detail="Project name is already linked to another Gatekeeper project")
+
+    if not invoice:
+        try:
+            create_invoice(request, db, idempotency_key)
+        except HTTPException:
+            db.rollback()
+            invoice = db.query(Invoice).filter_by(gatekeeper_project_id=project_id, archived_at=None).order_by(Invoice.created_at.desc()).first()
+            if not invoice:
+                raise
+
+    invoice = db.query(Invoice).filter_by(gatekeeper_project_id=project_id, archived_at=None).order_by(Invoice.created_at.desc()).first()
+    if not invoice:
+        raise HTTPException(status_code=502, detail="Scribed failed to persist the Gatekeeper invoice")
+    terms = json.loads(invoice.terms_json or "{}")
+    terms.update(request.model_dump(exclude_none=True))
+    terms["invoice_number"] = invoice.invoice_number
+    recorded_paid = sum((Decimal(str(item.amount)) for item in db.query(Payment).filter_by(invoice_id=invoice.id).all()), Decimal("0"))
+    gatekeeper_paid = Decimal(str(request.amount_paid or 0))
+    invoice.client_name = request.client_name
+    invoice.client_email = request.client_email
+    invoice.project_name = request.project_name
+    invoice.gatekeeper_project_id = project_id
+    invoice.amount = request.amount
+    invoice.base_amount = request.original_amount or request.amount
+    invoice.total_payments = max(recorded_paid, gatekeeper_paid)
+    invoice.outstanding_balance = max(Decimal("0"), Decimal(str(invoice.amount)) - Decimal(str(invoice.total_payments)))
+    invoice.currency = request.currency
+    invoice.status = "paid" if invoice.outstanding_balance == 0 else ("partially_paid" if invoice.total_payments > 0 else "sent")
+    invoice.terms_json = json.dumps(terms, default=str)
+    refresh_invoice_pdf(db, invoice)
+    audit(db, "gatekeeper_invoice_synced", "invoice", invoice.invoice_number, f"project_id={project_id}")
+    db.commit()
+    return {"invoice": {"id": invoice.id, "number": invoice.invoice_number, "status": invoice.status,
+                         "amount": str(invoice.amount), "currency": invoice.currency}}
+
+
 @app.get("/integrations/gatekeeper/invoices/{gatekeeper_project_id}")
 def gatekeeper_invoice_status(gatekeeper_project_id: str, db: Session = Depends(get_db), x_gatekeeper_secret: str | None = Header(default=None)) -> dict:
     expected = os.getenv("SCRIBED_INTEGRATION_SECRET")
