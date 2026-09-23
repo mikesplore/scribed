@@ -440,7 +440,18 @@ def record_gatekeeper_payment(payload: dict, db: Session = Depends(get_db), x_ga
     existing = payment_query.first()
     if existing:
         return {"invoice_number": invoice.invoice_number, "receipt_number": existing.receipt_number, "status": invoice.status, "idempotent": True}
-    paid_at = datetime.now(timezone.utc)
+    paid_at_raw = payload.get("paid_at")
+    if paid_at_raw:
+        try:
+            paid_at = datetime.fromisoformat(str(paid_at_raw).replace("Z", "+00:00"))
+            if paid_at.tzinfo is None:
+                paid_at = paid_at.replace(tzinfo=timezone.utc)
+            else:
+                paid_at = paid_at.astimezone(timezone.utc)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="paid_at must be an ISO date-time")
+    else:
+        paid_at = datetime.now(timezone.utc)
     existing_paid = sum((Decimal(str(item.amount)) for item in db.query(Payment).filter_by(invoice_id=invoice.id).all()), Decimal("0"))
     if paid_amount <= 0 or existing_paid + paid_amount > Decimal(str(invoice.amount)):
         raise HTTPException(status_code=409, detail="Payment exceeds the invoice balance")
