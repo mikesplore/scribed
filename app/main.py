@@ -433,10 +433,12 @@ def gatekeeper_service_invoice_status(gatekeeper_service_id: str, db: Session = 
     terms = json.loads(invoice.terms_json or "{}")
     payments = db.query(Payment).filter_by(invoice_id=invoice.id).order_by(Payment.paid_at.desc()).all()
     paid = sum((Decimal(str(item.amount)) for item in payments), Decimal("0"))
-    balance = max(Decimal("0"), Decimal(str(invoice.amount)) - paid)
+    invoice_total = Decimal(str(invoice.base_amount or invoice.amount)) + Decimal(str(invoice.total_adjustments or 0))
+    balance = max(Decimal("0"), invoice_total - paid)
     return {"invoice": {"id": invoice.id, "number": invoice.invoice_number, "status": invoice.status,
-                         "amount": str(invoice.amount), "currency": invoice.currency, "due_date": terms.get("due_date"),
-                         "paid": str(paid), "balance": str(balance)}}
+                         "amount": str(invoice_total), "currency": invoice.currency, "due_date": terms.get("due_date"),
+                         "paid": str(paid), "balance": str(balance),
+                         "payments": [{"provider_reference": item.provider_reference, "amount": str(item.amount)} for item in payments]}}
 
 
 @app.get("/audit/{number}")
@@ -497,6 +499,7 @@ def record_gatekeeper_payment(payload: dict, db: Session = Depends(get_db), x_ga
     if not expected or x_gatekeeper_secret != expected:
         raise HTTPException(status_code=401, detail="Invalid integration secret")
     project_id = str(payload.get("project_id", ""))
+    service_id = str(payload.get("service_id", "") or "")
     provider_reference = str(payload.get("provider_reference", ""))
     provider = str(payload.get("provider", "unknown"))
     currency = str(payload.get("currency", ""))
@@ -504,9 +507,12 @@ def record_gatekeeper_payment(payload: dict, db: Session = Depends(get_db), x_ga
     except (InvalidOperation, ValueError): raise HTTPException(status_code=422, detail="amount must be numeric")
     if not project_id or not provider_reference:
         raise HTTPException(status_code=422, detail="project_id and provider_reference are required")
-    invoice = db.query(Invoice).filter_by(gatekeeper_project_id=project_id, archived_at=None).order_by(Invoice.created_at.desc()).first()
+    if service_id:
+        invoice = db.query(Invoice).filter_by(gatekeeper_service_id=service_id, archived_at=None).order_by(Invoice.created_at.desc()).first()
+    else:
+        invoice = db.query(Invoice).filter_by(gatekeeper_project_id=project_id, archived_at=None).order_by(Invoice.created_at.desc()).first()
     if not invoice:
-        raise HTTPException(status_code=404, detail="Invoice not found for project")
+        raise HTTPException(status_code=404, detail="Invoice not found for payment owner")
     if currency.upper() != invoice.currency.upper():
         raise HTTPException(status_code=409, detail="Payment currency does not match the invoice")
     payment_query = db.query(Payment).filter(Payment.provider_reference == provider_reference)
