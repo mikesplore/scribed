@@ -88,3 +88,8 @@ class LedgerSyncRequest(BaseModel):
         if self.total_payments is not None:
             return self.total_payments
         return self.successful_payments
+
+
+class ServiceLedgerSyncRequest(BaseModel):
+    service_id: str = Field(min_length=1, max_length=64)
+    adjustments: list[LedgerAdjustment] = Field(default_factory=list)

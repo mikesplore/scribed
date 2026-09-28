@@ -26,7 +26,7 @@ from .mailer import send_pdf
 from .storage import delete_pdf, read_pdf, upload_pdf
 
 from .render import render_pdf
-from .schemas import ContractRequest, InvoiceRequest, LedgerSyncRequest
+from .schemas import ContractRequest, InvoiceRequest, LedgerSyncRequest, ServiceLedgerSyncRequest
 
 logger = logging.getLogger(__name__)
 production = os.getenv("ENVIRONMENT", "development").lower() == "production"
@@ -605,6 +605,54 @@ def sync_gatekeeper_ledger(payload: LedgerSyncRequest, db: Session = Depends(get
     audit(db, "ledger_synced", "invoice", invoice.invoice_number, f"version={payload.ledger_version} base={payload.base_amount} adjustments={total_adjustments} payments={total_payments} outstanding={payload.outstanding_balance}")
     db.commit()
     return {"invoice_number": invoice.invoice_number, "status": invoice.status, "base_amount": str(invoice.base_amount), "total_adjustments": str(invoice.total_adjustments), "total_payments": str(invoice.total_payments), "outstanding_balance": str(invoice.outstanding_balance)}
+
+
+@app.post("/integrations/gatekeeper/services/{gatekeeper_service_id}/adjustments")
+def sync_gatekeeper_service_adjustments(gatekeeper_service_id: str, payload: ServiceLedgerSyncRequest, db: Session = Depends(get_db), x_gatekeeper_secret: str | None = Header(default=None)) -> dict:
+    expected = os.getenv("SCRIBED_INTEGRATION_SECRET")
+    if not expected or x_gatekeeper_secret != expected:
+        raise HTTPException(status_code=401, detail="Invalid integration secret")
+    if payload.service_id != gatekeeper_service_id:
+        raise HTTPException(status_code=409, detail="Service ID does not match the request path")
+    invoice = db.query(Invoice).filter_by(gatekeeper_service_id=gatekeeper_service_id, archived_at=None).order_by(Invoice.created_at.desc()).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found for service")
+    for adjustment in payload.adjustments:
+        if not db.query(InvoiceAdjustment).filter_by(gatekeeper_adjustment_id=adjustment.id).first():
+            try:
+                with db.begin_nested():
+                    db.add(InvoiceAdjustment(invoice_id=invoice.id, gatekeeper_adjustment_id=adjustment.id, type=adjustment.type,
+                                             amount=adjustment.amount, reason=adjustment.reason, actor=adjustment.actor,
+                                             created_at=datetime.now(timezone.utc)))
+                    db.flush()
+            except IntegrityError:
+                pass
+    adjustments = db.query(InvoiceAdjustment).filter_by(invoice_id=invoice.id).all()
+    additional = sum((Decimal(str(item.amount)) for item in adjustments if item.type == "ADDITIONAL_CHARGE"), Decimal("0"))
+    discounts = sum((Decimal(str(item.amount)) for item in adjustments if item.type == "DISCOUNT"), Decimal("0"))
+    net_adjustments = additional - discounts
+    base_amount = Decimal(str(invoice.base_amount))
+    if base_amount == 0:
+        base_amount = Decimal(str(invoice.amount)) - Decimal(str(invoice.total_adjustments or 0))
+    total_amount = base_amount + net_adjustments
+    if total_amount <= 0:
+        raise HTTPException(status_code=409, detail="Service adjustments cannot reduce the invoice total to zero or below")
+    payments = db.query(Payment).filter_by(invoice_id=invoice.id).all()
+    total_paid = sum((Decimal(str(item.amount)) for item in payments), Decimal("0"))
+    balance = max(Decimal("0"), total_amount - total_paid)
+    invoice.base_amount = base_amount
+    invoice.amount = total_amount
+    invoice.total_adjustments = net_adjustments
+    invoice.total_payments = total_paid
+    invoice.outstanding_balance = balance
+    invoice.status = "paid" if balance == 0 else ("partially_paid" if total_paid > 0 else "sent")
+    refresh_invoice_pdf(db, invoice)
+    db.commit()
+    audit(db, "service_ledger_synced", "invoice", invoice.invoice_number,
+          f"service_id={gatekeeper_service_id} adjustments={net_adjustments} paid={total_paid} balance={balance}")
+    db.commit()
+    return {"invoice_number": invoice.invoice_number, "status": invoice.status, "base_amount": str(base_amount),
+            "total_adjustments": str(net_adjustments), "total_payments": str(total_paid), "outstanding_balance": str(balance)}
 
 
 @app.get("/invoices/{document_id}/receipt", response_class=Response)
