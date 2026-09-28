@@ -38,6 +38,7 @@ class InvoiceRequest(BaseModel):
     invoice_number: DocumentNumber = Field(default="DRAFT-INVOICE")
     payment_instructions: str = "Payment details will be shared by email."
     gatekeeper_project_id: str | None = None
+    gatekeeper_service_id: str | None = None
     original_amount: Decimal | None = Field(default=None, gt=0)
     amount_paid: Decimal | None = Field(default=None, ge=0)
     payments: list[dict] = Field(default_factory=list)

@@ -228,7 +228,7 @@ def create_invoice(request: InvoiceRequest, db: Session = Depends(get_db), idemp
     document = Invoice(invoice_number=number, client_name=request.client_name, project_name=request.project_name, amount=request.amount,
                        base_amount=request.original_amount or request.amount, outstanding_balance=request.amount,
                        client_email=request.client_email, gatekeeper_project_id=request.gatekeeper_project_id,
-                       currency=request.currency, terms_json=json.dumps(request_data, default=str), pdf_path=location,
+                       gatekeeper_service_id=request.gatekeeper_service_id, currency=request.currency, terms_json=json.dumps(request_data, default=str), pdf_path=location,
                        pdf_hash=hashlib.sha256(pdf).hexdigest(), idempotency_key=idempotency_key,
                        request_fingerprint=fingerprint(request.model_dump()))
     db.add(document)
@@ -257,6 +257,7 @@ def duplicate_invoice(document_id: int, db: Session = Depends(get_db)) -> Respon
     data = json.loads(source.terms_json)
     data.pop("invoice_number", None)
     data["gatekeeper_project_id"] = source.gatekeeper_project_id
+    data["gatekeeper_service_id"] = source.gatekeeper_service_id
     return create_invoice(InvoiceRequest(**data), db)
 
 
@@ -406,17 +407,36 @@ def gatekeeper_invoice_status(gatekeeper_project_id: str, db: Session = Depends(
     invoice = db.query(Invoice).filter_by(gatekeeper_project_id=gatekeeper_project_id, archived_at=None).order_by(Invoice.created_at.desc()).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found for project")
+    terms = json.loads(invoice.terms_json or "{}")
     payments = db.query(Payment).filter_by(invoice_id=invoice.id).order_by(Payment.paid_at.desc()).all()
     paid = sum((Decimal(str(item.amount)) for item in payments), Decimal("0"))
     public_base = os.getenv("SCRIBED_PUBLIC_URL", "").rstrip("/")
     return {
         "invoice": {"id": invoice.id, "number": invoice.invoice_number, "status": invoice.status,
                     "amount": str(invoice.amount), "currency": invoice.currency,
+                    "due_date": terms.get("due_date"),
                     "paid": str(paid), "balance": str(max(Decimal("0"), Decimal(str(invoice.amount)) - paid))},
         "payments": [{"id": item.id, "provider": item.provider, "provider_reference": item.provider_reference,
                       "amount": str(item.amount), "currency": item.currency, "paid_at": item.paid_at,
                       "receipt_number": item.receipt_number, "receipt_url": f"{public_base}/payments/{item.id}/receipt" if public_base else f"/payments/{item.id}/receipt"} for item in payments]
     }
+
+
+@app.get("/integrations/gatekeeper/services/{gatekeeper_service_id}/invoice")
+def gatekeeper_service_invoice_status(gatekeeper_service_id: str, db: Session = Depends(get_db), x_gatekeeper_secret: str | None = Header(default=None)) -> dict:
+    expected = os.getenv("SCRIBED_INTEGRATION_SECRET")
+    if not expected or x_gatekeeper_secret != expected:
+        raise HTTPException(status_code=401, detail="Invalid integration secret")
+    invoice = db.query(Invoice).filter_by(gatekeeper_service_id=gatekeeper_service_id, archived_at=None).order_by(Invoice.created_at.desc()).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found for service")
+    terms = json.loads(invoice.terms_json or "{}")
+    payments = db.query(Payment).filter_by(invoice_id=invoice.id).order_by(Payment.paid_at.desc()).all()
+    paid = sum((Decimal(str(item.amount)) for item in payments), Decimal("0"))
+    balance = max(Decimal("0"), Decimal(str(invoice.amount)) - paid)
+    return {"invoice": {"id": invoice.id, "number": invoice.invoice_number, "status": invoice.status,
+                         "amount": str(invoice.amount), "currency": invoice.currency, "due_date": terms.get("due_date"),
+                         "paid": str(paid), "balance": str(balance)}}
 
 
 @app.get("/audit/{number}")

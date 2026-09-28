@@ -38,6 +38,7 @@ class Invoice(Base):
     project_name: Mapped[str] = mapped_column(String(255))
     client_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     gatekeeper_project_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    gatekeeper_service_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     terms_json: Mapped[str] = mapped_column(Text, default="{}")
     amount: Mapped[float] = mapped_column(Numeric(14, 2))
     base_amount: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
