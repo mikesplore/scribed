@@ -20,9 +20,12 @@ environment = Environment(
 
 def _decimal_value(value: Any, field: str) -> Decimal:
     try:
-        return Decimal(str(value if value is not None else 0))
+        number = Decimal(str(value if value is not None else 0))
     except (InvalidOperation, TypeError, ValueError) as exc:
         raise ValueError(f"{field} must be numeric") from exc
+    if not number.is_finite() or number.copy_abs() > Decimal("999999999999.99") or number.as_tuple().exponent < -2:
+        raise ValueError(f"{field} must be finite and have at most two decimal places")
+    return number
 
 
 def render_pdf(template_name: str, fields: dict[str, Any]) -> bytes:

@@ -67,12 +67,13 @@ scribed/
   - `contracts`: id, contract_number (e.g. `MK-CON-0001`), client_name, project_name, terms_json (snapshot of data used to render), status (`draft`/`sent`/`accepted`), created_at, pdf_path
   - `invoices`: id, invoice_number (e.g. `MK-INV-0001`), client_name, amount, currency, status (`draft`/`sent`/`paid`), created_at, pdf_path
 - Numbering: sequential per document type, generated at creation time, not reused.
-- On generate, persist the PDF to disk under a predictable path (`storage/contracts/{contract_number}.pdf`) and store the path + terms snapshot in DB.
+- On generate, persist the structured terms snapshot in DB and return a freshly rendered PDF without storing a draft PDF.
+- Render draft PDFs on demand from the saved snapshot. When a document is sent or otherwise issued, store that exact PDF and its hash in local storage or R2 so later downloads and verification refer to the issued file.
 - New endpoints:
   - `GET /contracts/{id}` — fetch metadata + PDF
   - `GET /invoices/{id}` — same
 
-**Acceptance criteria**: generating a document creates a DB row with a unique sequential number and a retrievable PDF.
+**Acceptance criteria**: generating a document creates a DB row with a unique sequential number and a retrievable PDF; drafts have no stored PDF, and the first issued PDF is stored as an immutable artifact.
 
 ### Telegram bot (basic)
 

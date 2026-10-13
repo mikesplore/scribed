@@ -10,7 +10,7 @@ from collections import defaultdict, deque
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func
@@ -38,6 +38,8 @@ async def lifespan(_app: FastAPI):
     global telegram_application
     webhook_url = os.getenv("TELEGRAM_WEBHOOK_URL", "").rstrip("/")
     if webhook_url and os.getenv("TELEGRAM_BOT_TOKEN"):
+        if not os.getenv("TELEGRAM_WEBHOOK_SECRET"):
+            raise RuntimeError("TELEGRAM_WEBHOOK_SECRET is required when the Telegram webhook is enabled")
         from bot import build_application
         from telegram import Update
 
@@ -71,7 +73,7 @@ _requests: dict[str, deque[float]] = defaultdict(deque)
 def audit(db, action: str, kind: str, number: str, detail: str | None = None):
     db.add(AuditLog(action=action, document_type=kind, document_number=number, detail=detail))
 
-def refresh_invoice_pdf(db, invoice: Invoice) -> None:
+def invoice_render_data(db, invoice: Invoice) -> dict:
     adjustments = db.query(InvoiceAdjustment).filter_by(invoice_id=invoice.id).order_by(InvoiceAdjustment.created_at.asc()).all()
     payments = db.query(Payment).filter_by(invoice_id=invoice.id).order_by(Payment.paid_at.asc()).all()
     data = json.loads(invoice.terms_json or "{}")
@@ -82,11 +84,37 @@ def refresh_invoice_pdf(db, invoice: Invoice) -> None:
                 outstanding_balance=invoice.outstanding_balance,
                 adjustments=[{"label": "Additional charge" if item.type == "ADDITIONAL_CHARGE" else "Discount", "reason": item.reason, "display_amount": f"{'+' if item.type == 'ADDITIONAL_CHARGE' else '-'}{float(item.amount):,.2f}"} for item in adjustments],
                 payments=[{"amount": item.amount, "status": "success", "paidAt": item.paid_at} for item in payments])
-    pdf = render_pdf("invoice.html", data)
-    invoice.pdf_path = upload_pdf(f"invoices/{pdf_filename(invoice.gatekeeper_project_id, invoice.project_name, 'invoice')}", pdf)
+    return data
+
+
+def contract_render_data(contract: Contract) -> dict:
+    data = json.loads(contract.terms_json or "{}")
+    data["contract_number"] = contract.contract_number
+    data["amount"] = Decimal(str(data["amount"]))
+    return data
+
+
+def refresh_invoice_pdf(db, invoice: Invoice) -> None:
+    """Persist the first issued invoice rendition; drafts and issued files stay immutable."""
+    if invoice.status == "draft" or invoice.pdf_path:
+        return
+    pdf = render_pdf("invoice.html", invoice_render_data(db, invoice))
+    location = document_storage_key("invoices", invoice.invoice_number, pdf)
+    invoice.pdf_path = upload_pdf(location, pdf)
+    invoice.pdf_hash = hashlib.sha256(pdf).hexdigest()
 
 def fingerprint(payload: dict) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def numeric_version(value: str) -> tuple[int, ...] | None:
+    normalized = value.lower().removeprefix("v")
+    if not re.fullmatch(r"\d+(?:\.\d+)*", normalized):
+        return None
+    parts = [int(part) for part in normalized.split(".")]
+    while len(parts) > 1 and parts[-1] == 0:
+        parts.pop()
+    return tuple(parts)
 
 def pdf_filename(project_id: str | None, project_name: str, kind: str) -> str:
     """Build a safe, readable filename from the project title.
@@ -101,6 +129,12 @@ def pdf_filename(project_id: str | None, project_name: str, kind: str) -> str:
     return f"{slug}.pdf"
 
 
+def document_storage_key(kind: str, number: str, content: bytes) -> str:
+    """Use an immutable per-version object key to prevent cross-document overwrites."""
+    digest = hashlib.sha256(content).hexdigest()
+    return f"{kind}/{number}-{digest}.pdf"
+
+
 def existing_project_document(db: Session, model, project_name: str):
     """Return an existing document for this project, including archived rows."""
     normalized_name = project_name.strip().lower()
@@ -110,8 +144,25 @@ def existing_project_document(db: Session, model, project_name: str):
 
 @app.middleware("http")
 async def require_api_token(request: Request, call_next):
-    if request.headers.get("content-length") and int(request.headers["content-length"]) > MAX_BODY:
+    content_length = request.headers.get("content-length")
+    try:
+        too_large = content_length is not None and int(content_length) > MAX_BODY
+    except ValueError:
+        return Response(content='{"detail":"Invalid Content-Length"}', status_code=400, media_type="application/json")
+    if too_large:
         return Response(content='{"detail":"Payload Too Large"}', status_code=413, media_type="application/json")
+    if request.method in {"POST", "PUT", "PATCH"} and content_length is None:
+        body = await request.body()
+        if len(body) > MAX_BODY:
+            return Response(content='{"detail":"Payload Too Large"}', status_code=413, media_type="application/json")
+        body_sent = False
+        async def replay_body():
+            nonlocal body_sent
+            if body_sent:
+                return {"type": "http.request", "body": b"", "more_body": False}
+            body_sent = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        request = Request(request.scope, receive=replay_body)
     path = request.url.path
     expected = os.getenv("SCRIBED_API_TOKEN", "").strip()
     if path in {"/health", "/docs", "/redoc", "/openapi.json", "/telegram/webhook"} or path.startswith("/verify/"):
@@ -147,7 +198,9 @@ async def telegram_webhook(request: Request) -> dict[str, bool]:
     if telegram_application is None:
         raise HTTPException(status_code=503, detail="Telegram webhook is not configured")
     expected = os.getenv("TELEGRAM_WEBHOOK_SECRET")
-    if expected and request.headers.get("x-telegram-bot-api-secret-token") != expected:
+    if not expected:
+        raise HTTPException(status_code=503, detail="Telegram webhook secret is not configured")
+    if request.headers.get("x-telegram-bot-api-secret-token") != expected:
         raise HTTPException(status_code=403, detail="Invalid webhook secret")
     from telegram import Update
     update = Update.de_json(await request.json(), telegram_application.bot)
@@ -164,32 +217,41 @@ def generate_contract(request: ContractRequest) -> Response:
 
 @app.post("/contracts", response_class=Response)
 def create_contract(request: ContractRequest, db: Session = Depends(get_db), idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> Response:
-    if not isinstance(idempotency_key, str): idempotency_key = None
+    if not isinstance(idempotency_key, str):
+        idempotency_key = None
+    return _create_contract(request, db, idempotency_key)
+
+
+def _create_contract(request: ContractRequest, db: Session, idempotency_key: str | None = None,
+                     allow_duplicate: bool = False) -> Response:
+    if idempotency_key is not None and len(idempotency_key) > 128:
+        raise HTTPException(status_code=422, detail="Idempotency-Key must be at most 128 characters")
     if idempotency_key:
         existing = db.query(Contract).filter_by(idempotency_key=idempotency_key).first()
         if existing:
             if existing.request_fingerprint != fingerprint(request.model_dump()):
                 raise HTTPException(status_code=409, detail="Idempotency-Key was already used with different data")
-            return _file_response(existing.pdf_path, existing.contract_number,
-                                  existing.gatekeeper_project_id, existing.project_name, "contract")
-    existing = existing_project_document(db, Contract, request.project_name)
+            return _document_pdf_response(db, existing, "contract")
+    existing = None if allow_duplicate else existing_project_document(db, Contract, request.project_name)
     if existing:
         raise HTTPException(status_code=409, detail="A contract already exists for this project")
     number = next_number(db, "contract", "MK-CON")
     request_data = request.model_dump()
     request_data["contract_number"] = number
     pdf = render_pdf("contract.html", request_data)
-    location = f"contracts/{pdf_filename(request.gatekeeper_project_id, request.project_name, 'contract')}"
     document = Contract(contract_number=number, client_name=request.client_name, project_name=request.project_name,
                         gatekeeper_project_id=request.gatekeeper_project_id,
-                        terms_json=json.dumps(request_data, default=str), pdf_path=location,
-                        pdf_hash=hashlib.sha256(pdf).hexdigest(), idempotency_key=idempotency_key,
+                        terms_json=json.dumps(request_data, default=str), pdf_path=None,
+                        pdf_hash=None, idempotency_key=idempotency_key,
                         request_fingerprint=fingerprint(request.model_dump()))
-    db.add(document)
-    audit(db, "created", "contract", number)
-    db.commit()
-    document.pdf_path = upload_pdf(location, pdf)
-    db.commit()
+    try:
+        db.add(document)
+        audit(db, "created", "contract", number)
+        db.flush()
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     return Response(
         content=pdf,
         media_type="application/pdf",
@@ -209,33 +271,51 @@ def generate_invoice(request: InvoiceRequest) -> Response:
 
 @app.post("/invoices", response_class=Response)
 def create_invoice(request: InvoiceRequest, db: Session = Depends(get_db), idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> Response:
-    if not isinstance(idempotency_key, str): idempotency_key = None
+    if not isinstance(idempotency_key, str):
+        idempotency_key = None
+    return _create_invoice(request, db, idempotency_key)
+
+
+def _create_invoice(request: InvoiceRequest, db: Session, idempotency_key: str | None = None,
+                    allow_duplicate: bool = False) -> Response:
+    if idempotency_key is not None and len(idempotency_key) > 128:
+        raise HTTPException(status_code=422, detail="Idempotency-Key must be at most 128 characters")
     if idempotency_key:
         existing = db.query(Invoice).filter_by(idempotency_key=idempotency_key).first()
         if existing:
             if existing.request_fingerprint != fingerprint(request.model_dump()):
                 raise HTTPException(status_code=409, detail="Idempotency-Key was already used with different data")
-            return _file_response(existing.pdf_path, existing.invoice_number,
-                                  existing.gatekeeper_project_id, existing.project_name, "invoice")
-    existing = existing_project_document(db, Invoice, request.project_name)
+            return _document_pdf_response(db, existing, "invoice")
+    existing = None if allow_duplicate or request.gatekeeper_service_id else existing_project_document(db, Invoice, request.project_name)
     if existing:
         raise HTTPException(status_code=409, detail="An invoice already exists for this project")
     number = next_number(db, "invoice", "MK-INV")
     request_data = request.model_dump()
-    request_data["invoice_number"] = number
-    pdf = render_pdf("invoice.html", request_data)
-    location = f"invoices/{pdf_filename(request.gatekeeper_project_id, request.project_name, 'invoice')}"
-    document = Invoice(invoice_number=number, client_name=request.client_name, project_name=request.project_name, amount=request.amount,
-                       base_amount=request.original_amount or request.amount, outstanding_balance=request.amount,
+    invoice_total = request.original_amount or request.amount
+    total_paid = request.amount_paid or Decimal("0")
+    if total_paid > invoice_total:
+        raise HTTPException(status_code=422, detail="amount_paid cannot exceed the invoice total")
+    balance = invoice_total - total_paid
+    request_data.update(amount=invoice_total, original_amount=invoice_total, amount_paid=total_paid)
+    render_data = {**request_data, "total_paid": total_paid, "outstanding_balance": balance,
+                   "invoice_number": number}
+    pdf = render_pdf("invoice.html", render_data)
+    document = Invoice(invoice_number=number, client_name=request.client_name, project_name=request.project_name, amount=invoice_total,
+                       base_amount=invoice_total, total_payments=total_paid, outstanding_balance=balance,
                        client_email=request.client_email, gatekeeper_project_id=request.gatekeeper_project_id,
-                       gatekeeper_service_id=request.gatekeeper_service_id, currency=request.currency, terms_json=json.dumps(request_data, default=str), pdf_path=location,
-                       pdf_hash=hashlib.sha256(pdf).hexdigest(), idempotency_key=idempotency_key,
+                       gatekeeper_service_id=request.gatekeeper_service_id, currency=request.currency,
+                       status="draft",
+                       terms_json=json.dumps(request_data, default=str), pdf_path=None,
+                       pdf_hash=None, idempotency_key=idempotency_key,
                        request_fingerprint=fingerprint(request.model_dump()))
-    db.add(document)
-    audit(db, "created", "invoice", number)
-    db.commit()
-    document.pdf_path = upload_pdf(location, pdf)
-    db.commit()
+    try:
+        db.add(document)
+        audit(db, "created", "invoice", number)
+        db.flush()
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f'inline; filename="{pdf_filename(request.gatekeeper_project_id, request.project_name, "invoice")}"'})
 
@@ -247,7 +327,7 @@ def duplicate_contract(document_id: int, db: Session = Depends(get_db)) -> Respo
     data = json.loads(source.terms_json)
     data.pop("contract_number", None)
     data["gatekeeper_project_id"] = source.gatekeeper_project_id
-    return create_contract(ContractRequest(**data), db)
+    return _create_contract(ContractRequest(**data), db, allow_duplicate=True)
 
 
 @app.post("/invoices/{document_id}/duplicate", response_class=Response)
@@ -258,7 +338,14 @@ def duplicate_invoice(document_id: int, db: Session = Depends(get_db)) -> Respon
     data.pop("invoice_number", None)
     data["gatekeeper_project_id"] = source.gatekeeper_project_id
     data["gatekeeper_service_id"] = source.gatekeeper_service_id
-    return create_invoice(InvoiceRequest(**data), db)
+    data.pop("total_paid", None)
+    data.pop("outstanding_balance", None)
+    data.pop("_ledger_version", None)
+    data.pop("_ledger_fingerprint", None)
+    data["amount_paid"] = 0
+    data["original_amount"] = data["amount"]
+    data.pop("payments", None)
+    return _create_invoice(InvoiceRequest(**data), db, allow_duplicate=True)
 
 
 def _file_response(path: str, filename: str, project_id: str | None = None,
@@ -273,13 +360,27 @@ def _file_response(path: str, filename: str, project_id: str | None = None,
                     headers={"Content-Disposition": f'inline; filename="{download_name}"'})
 
 
+def _document_pdf_response(db: Session, document: Contract | Invoice, kind: str) -> Response:
+    project_id = document.gatekeeper_project_id
+    if document.pdf_path:
+        return _file_response(document.pdf_path, document.contract_number if kind == "contract" else document.invoice_number,
+                              project_id, document.project_name, kind)
+    if kind == "contract":
+        pdf = render_pdf("contract.html", contract_render_data(document))
+    else:
+        data = invoice_render_data(db, document)
+        pdf = render_pdf("invoice.html", data)
+    download_name = pdf_filename(project_id, document.project_name, kind)
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="{download_name}"'})
+
+
 @app.get("/contracts/{document_id}", response_class=Response)
 def get_contract(document_id: int, db: Session = Depends(get_db)) -> Response:
     document = db.get(Contract, document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Contract not found")
-    return _file_response(document.pdf_path, document.contract_number,
-                          document.gatekeeper_project_id, document.project_name, "contract")
+    return _document_pdf_response(db, document, "contract")
 
 
 @app.get("/invoices/{document_id}", response_class=Response)
@@ -287,8 +388,7 @@ def get_invoice(document_id: int, db: Session = Depends(get_db)) -> Response:
     document = db.get(Invoice, document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    return _file_response(document.pdf_path, document.invoice_number,
-                          document.gatekeeper_project_id, document.project_name, "invoice")
+    return _document_pdf_response(db, document, "invoice")
 
 
 @app.get("/documents/{number}")
@@ -330,7 +430,8 @@ def permanently_delete_contract(document_id: int, db: Session = Depends(get_db))
     document = db.get(Contract, document_id)
     if not document: raise HTTPException(status_code=404, detail="Contract not found")
     if not document.archived_at: raise HTTPException(status_code=409, detail="Archive the contract before permanent deletion")
-    delete_pdf(document.pdf_path)
+    if document.pdf_path:
+        delete_pdf(document.pdf_path)
     number = document.contract_number; audit(db, "permanently_deleted", "contract", number); db.delete(document); db.commit()
     return {"deleted": True, "number": number}
 
@@ -377,18 +478,23 @@ def ensure_gatekeeper_invoice(request: InvoiceRequest, db: Session = Depends(get
     if not invoice:
         raise HTTPException(status_code=502, detail="Scribed failed to persist the Gatekeeper invoice")
     terms = json.loads(invoice.terms_json or "{}")
+    invoice_total = request.original_amount or request.amount
+    gatekeeper_paid = request.amount_paid or Decimal("0")
+    if gatekeeper_paid > invoice_total:
+        raise HTTPException(status_code=409, detail="Recorded payments exceed the invoice total")
     terms.update(request.model_dump(exclude_none=True))
+    terms.update(amount=invoice_total, original_amount=invoice_total, amount_paid=gatekeeper_paid,
+                 total_paid=gatekeeper_paid, outstanding_balance=invoice_total - gatekeeper_paid)
     terms["invoice_number"] = invoice.invoice_number
     recorded_paid = sum((Decimal(str(item.amount)) for item in db.query(Payment).filter_by(invoice_id=invoice.id).all()), Decimal("0"))
-    gatekeeper_paid = Decimal(str(request.amount_paid or 0))
     invoice.client_name = request.client_name
     invoice.client_email = request.client_email
     invoice.project_name = request.project_name
     invoice.gatekeeper_project_id = project_id
-    invoice.amount = request.amount
-    invoice.base_amount = request.original_amount or request.amount
+    invoice.amount = invoice_total
+    invoice.base_amount = invoice_total
     invoice.total_payments = max(recorded_paid, gatekeeper_paid)
-    invoice.outstanding_balance = max(Decimal("0"), Decimal(str(invoice.amount)) - Decimal(str(invoice.total_payments)))
+    invoice.outstanding_balance = max(Decimal("0"), invoice_total - Decimal(str(invoice.total_payments)))
     invoice.currency = request.currency
     invoice.status = "paid" if invoice.outstanding_balance == 0 else ("partially_paid" if invoice.total_payments > 0 else "sent")
     invoice.terms_json = json.dumps(terms, default=str)
@@ -409,7 +515,7 @@ def gatekeeper_invoice_status(gatekeeper_project_id: str, db: Session = Depends(
         raise HTTPException(status_code=404, detail="Invoice not found for project")
     terms = json.loads(invoice.terms_json or "{}")
     payments = db.query(Payment).filter_by(invoice_id=invoice.id).order_by(Payment.paid_at.desc()).all()
-    paid = sum((Decimal(str(item.amount)) for item in payments), Decimal("0"))
+    paid = max(sum((Decimal(str(item.amount)) for item in payments), Decimal("0")), Decimal(str(invoice.total_payments or 0)))
     public_base = os.getenv("SCRIBED_PUBLIC_URL", "").rstrip("/")
     return {
         "invoice": {"id": invoice.id, "number": invoice.invoice_number, "status": invoice.status,
@@ -432,13 +538,41 @@ def gatekeeper_service_invoice_status(gatekeeper_service_id: str, db: Session = 
         raise HTTPException(status_code=404, detail="Invoice not found for service")
     terms = json.loads(invoice.terms_json or "{}")
     payments = db.query(Payment).filter_by(invoice_id=invoice.id).order_by(Payment.paid_at.desc()).all()
-    paid = sum((Decimal(str(item.amount)) for item in payments), Decimal("0"))
+    paid = max(sum((Decimal(str(item.amount)) for item in payments), Decimal("0")), Decimal(str(invoice.total_payments or 0)))
     invoice_total = Decimal(str(invoice.base_amount or invoice.amount)) + Decimal(str(invoice.total_adjustments or 0))
     balance = max(Decimal("0"), invoice_total - paid)
     return {"invoice": {"id": invoice.id, "number": invoice.invoice_number, "status": invoice.status,
                          "amount": str(invoice_total), "currency": invoice.currency, "due_date": terms.get("due_date"),
                          "paid": str(paid), "balance": str(balance),
                          "payments": [{"provider_reference": item.provider_reference, "amount": str(item.amount)} for item in payments]}}
+
+
+@app.post("/integrations/gatekeeper/services/{gatekeeper_service_id}/invoices/ensure")
+def ensure_gatekeeper_service_invoice(gatekeeper_service_id: str, request: InvoiceRequest, db: Session = Depends(get_db),
+                                      x_gatekeeper_secret: str | None = Header(default=None),
+                                      idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict:
+    expected = os.getenv("SCRIBED_INTEGRATION_SECRET")
+    if not expected or x_gatekeeper_secret != expected:
+        raise HTTPException(status_code=401, detail="Invalid integration secret")
+    if request.gatekeeper_service_id != gatekeeper_service_id:
+        raise HTTPException(status_code=409, detail="Service ID does not match the request path")
+    if not request.gatekeeper_project_id:
+        raise HTTPException(status_code=422, detail="gatekeeper_project_id is required")
+    invoice = db.query(Invoice).filter_by(gatekeeper_service_id=gatekeeper_service_id, archived_at=None).order_by(Invoice.created_at.desc()).first()
+    created = invoice is None
+    if not invoice:
+        try:
+            create_invoice(request, db, idempotency_key)
+        except HTTPException:
+            db.rollback()
+            invoice = db.query(Invoice).filter_by(gatekeeper_service_id=gatekeeper_service_id, archived_at=None).order_by(Invoice.created_at.desc()).first()
+            if not invoice:
+                raise
+        invoice = db.query(Invoice).filter_by(gatekeeper_service_id=gatekeeper_service_id, archived_at=None).order_by(Invoice.created_at.desc()).first()
+    if not invoice:
+        raise HTTPException(status_code=502, detail="Scribed failed to persist the Gatekeeper service invoice")
+    return {"created": created, "invoice": {"id": invoice.id, "number": invoice.invoice_number, "status": invoice.status,
+                                               "amount": str(invoice.amount), "currency": invoice.currency}}
 
 
 @app.get("/audit/{number}")
@@ -508,18 +642,24 @@ def record_gatekeeper_payment(payload: dict, db: Session = Depends(get_db), x_ga
     if not project_id or not provider_reference:
         raise HTTPException(status_code=422, detail="project_id and provider_reference are required")
     if service_id:
-        invoice = db.query(Invoice).filter_by(gatekeeper_service_id=service_id, archived_at=None).order_by(Invoice.created_at.desc()).first()
+        invoice = db.query(Invoice).filter_by(gatekeeper_service_id=service_id, archived_at=None).order_by(Invoice.created_at.desc()).with_for_update().first()
     else:
-        invoice = db.query(Invoice).filter_by(gatekeeper_project_id=project_id, archived_at=None).order_by(Invoice.created_at.desc()).first()
+        invoice = db.query(Invoice).filter_by(gatekeeper_project_id=project_id, archived_at=None).order_by(Invoice.created_at.desc()).with_for_update().first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found for payment owner")
     if currency.upper() != invoice.currency.upper():
         raise HTTPException(status_code=409, detail="Payment currency does not match the invoice")
+    if len(provider_reference) > 255 or len(provider) > 30 or (idempotency_key and len(idempotency_key) > 255):
+        raise HTTPException(status_code=422, detail="Payment reference, provider, or idempotency key is too long")
     payment_query = db.query(Payment).filter(Payment.provider_reference == provider_reference)
-    if idempotency_key:
-        payment_query = db.query(Payment).filter((Payment.provider_reference == provider_reference) | (Payment.idempotency_key == idempotency_key))
-    existing = payment_query.first()
+    existing_by_reference = payment_query.first()
+    existing_by_key = db.query(Payment).filter_by(idempotency_key=idempotency_key).first() if idempotency_key else None
+    if existing_by_reference and existing_by_key and existing_by_reference.id != existing_by_key.id:
+        raise HTTPException(status_code=409, detail="Idempotency key and provider reference identify different payments")
+    existing = existing_by_reference or existing_by_key
     if existing:
+        if existing.invoice_id != invoice.id or existing.provider_reference != provider_reference:
+            raise HTTPException(status_code=409, detail="Payment retry does not match the original payment")
         return {"invoice_number": invoice.invoice_number, "receipt_number": existing.receipt_number, "status": invoice.status, "idempotent": True}
     paid_at_raw = payload.get("paid_at")
     if paid_at_raw:
@@ -533,8 +673,11 @@ def record_gatekeeper_payment(payload: dict, db: Session = Depends(get_db), x_ga
             raise HTTPException(status_code=422, detail="paid_at must be an ISO date-time")
     else:
         paid_at = datetime.now(timezone.utc)
-    existing_paid = sum((Decimal(str(item.amount)) for item in db.query(Payment).filter_by(invoice_id=invoice.id).all()), Decimal("0"))
-    if paid_amount <= 0 or existing_paid + paid_amount > Decimal(str(invoice.amount)):
+    recorded_paid = sum((Decimal(str(item.amount)) for item in db.query(Payment).filter_by(invoice_id=invoice.id).all()), Decimal("0"))
+    existing_paid = max(recorded_paid, Decimal(str(invoice.total_payments or 0)))
+    if (not paid_amount.is_finite() or paid_amount.as_tuple().exponent < -2
+            or paid_amount > Decimal("999999999999.99") or paid_amount <= 0
+            or existing_paid + paid_amount > Decimal(str(invoice.amount))):
         raise HTTPException(status_code=409, detail="Payment exceeds the invoice balance")
     total_paid = existing_paid + paid_amount
     invoice_total = Decimal(str(invoice.amount)).quantize(Decimal("0.01"))
@@ -543,7 +686,8 @@ def record_gatekeeper_payment(payload: dict, db: Session = Depends(get_db), x_ga
     invoice.outstanding_balance = max(Decimal("0"), Decimal(str(invoice.base_amount or invoice.amount)) + Decimal(str(invoice.total_adjustments or 0)) - total_paid)
     invoice.status = "paid" if total_paid >= invoice_total else "partially_paid"
     invoice.paid_at = paid_at if invoice.status == "paid" else invoice.paid_at
-    receipt_number = f"RCPT-{invoice.invoice_number}-{provider_reference[-8:]}"
+    receipt_suffix = hashlib.sha256(provider_reference.encode()).hexdigest()[:12]
+    receipt_number = f"RCPT-{invoice.invoice_number}-{receipt_suffix}"
     receipt_data = {"receipt_number": receipt_number, "invoice_number": invoice.invoice_number,
                     "client_name": invoice.client_name, "project_name": invoice.project_name,
                     "provider": provider, "provider_reference": provider_reference,
@@ -571,7 +715,7 @@ def sync_gatekeeper_ledger(payload: LedgerSyncRequest, db: Session = Depends(get
     expected = os.getenv("SCRIBED_INTEGRATION_SECRET")
     if not expected or x_gatekeeper_secret != expected:
         raise HTTPException(status_code=401, detail="Invalid integration secret")
-    invoice = db.query(Invoice).filter_by(gatekeeper_project_id=payload.project_id, archived_at=None).order_by(Invoice.created_at.desc()).first()
+    invoice = db.query(Invoice).filter_by(gatekeeper_project_id=payload.project_id, archived_at=None).order_by(Invoice.created_at.desc()).with_for_update().first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found for project")
     if payload.currency.upper() != invoice.currency.upper():
@@ -581,6 +725,37 @@ def sync_gatekeeper_ledger(payload: LedgerSyncRequest, db: Session = Depends(get
     calculated = payload.base_amount + total_adjustments - total_payments
     if calculated < 0 or calculated.quantize(Decimal("0.01")) != payload.outstanding_balance.quantize(Decimal("0.01")):
         raise HTTPException(status_code=409, detail="Ledger totals do not reconcile")
+    ledger_fingerprint = fingerprint(payload.model_dump())
+    terms = json.loads(invoice.terms_json or "{}")
+    previous_version = terms.get("_ledger_version")
+    previous_order = numeric_version(previous_version) if isinstance(previous_version, str) else None
+    incoming_order = numeric_version(payload.ledger_version)
+    if previous_version and payload.ledger_version == "legacy-sync":
+        if previous_version != "legacy-sync":
+            raise HTTPException(status_code=409, detail="Unversioned ledger snapshot cannot replace a versioned snapshot")
+        if terms.get("_ledger_fingerprint") == ledger_fingerprint:
+            return {"invoice_number": invoice.invoice_number, "status": invoice.status,
+                    "base_amount": str(invoice.base_amount), "total_adjustments": str(invoice.total_adjustments),
+                    "total_payments": str(invoice.total_payments), "outstanding_balance": str(invoice.outstanding_balance),
+                    "idempotent": True}
+        raise HTTPException(status_code=409, detail="Unversioned ledger snapshot cannot replace an existing snapshot")
+    if previous_version and payload.ledger_version != "legacy-sync":
+        if payload.ledger_version == previous_version:
+            if terms.get("_ledger_fingerprint") == ledger_fingerprint:
+                return {"invoice_number": invoice.invoice_number, "status": invoice.status,
+                        "base_amount": str(invoice.base_amount), "total_adjustments": str(invoice.total_adjustments),
+                        "total_payments": str(invoice.total_payments), "outstanding_balance": str(invoice.outstanding_balance),
+                        "idempotent": True}
+            raise HTTPException(status_code=409, detail="Ledger version was reused with different totals")
+        if previous_order is not None and incoming_order is not None and incoming_order < previous_order:
+            raise HTTPException(status_code=409, detail="Stale ledger snapshot")
+        if previous_order is not None and incoming_order == previous_order:
+            if terms.get("_ledger_fingerprint") == ledger_fingerprint:
+                return {"invoice_number": invoice.invoice_number, "status": invoice.status,
+                        "base_amount": str(invoice.base_amount), "total_adjustments": str(invoice.total_adjustments),
+                        "total_payments": str(invoice.total_payments), "outstanding_balance": str(invoice.outstanding_balance),
+                        "idempotent": True}
+            raise HTTPException(status_code=409, detail="Ledger version was reused with different totals")
     for adjustment in payload.adjustments:
         if not db.query(InvoiceAdjustment).filter_by(gatekeeper_adjustment_id=adjustment.id).first():
             # The same outbox event may be delivered concurrently during a replay.
@@ -600,11 +775,13 @@ def sync_gatekeeper_ledger(payload: LedgerSyncRequest, db: Session = Depends(get
     invoice.outstanding_balance = payload.outstanding_balance
     invoice.amount = payload.base_amount + total_adjustments
     invoice.status = "paid" if payload.outstanding_balance == 0 else ("partially_paid" if total_payments > 0 else "sent")
+    terms["_ledger_version"] = payload.ledger_version
+    terms["_ledger_fingerprint"] = ledger_fingerprint
+    invoice.terms_json = json.dumps(terms, default=str)
     refresh_invoice_pdf(db, invoice)
-    db.commit()
     audit(db, "ledger_synced", "invoice", invoice.invoice_number, f"version={payload.ledger_version} base={payload.base_amount} adjustments={total_adjustments} payments={total_payments} outstanding={payload.outstanding_balance}")
     db.commit()
-    return {"invoice_number": invoice.invoice_number, "status": invoice.status, "base_amount": str(invoice.base_amount), "total_adjustments": str(invoice.total_adjustments), "total_payments": str(invoice.total_payments), "outstanding_balance": str(invoice.outstanding_balance)}
+    return {"invoice_number": invoice.invoice_number, "status": invoice.status, "base_amount": str(invoice.base_amount), "total_adjustments": str(invoice.total_adjustments), "total_payments": str(invoice.total_payments), "outstanding_balance": str(invoice.outstanding_balance), "idempotent": False}
 
 
 @app.post("/integrations/gatekeeper/services/{gatekeeper_service_id}/adjustments")
@@ -638,7 +815,8 @@ def sync_gatekeeper_service_adjustments(gatekeeper_service_id: str, payload: Ser
     if total_amount <= 0:
         raise HTTPException(status_code=409, detail="Service adjustments cannot reduce the invoice total to zero or below")
     payments = db.query(Payment).filter_by(invoice_id=invoice.id).all()
-    total_paid = sum((Decimal(str(item.amount)) for item in payments), Decimal("0"))
+    total_paid = max(sum((Decimal(str(item.amount)) for item in payments), Decimal("0")),
+                     Decimal(str(invoice.total_payments or 0)))
     balance = max(Decimal("0"), total_amount - total_paid)
     invoice.base_amount = base_amount
     invoice.amount = total_amount
@@ -691,35 +869,66 @@ def verify_document(number: str, db: Session = Depends(get_db)) -> dict:
         contract = db.query(Invoice).filter_by(invoice_number=number).first()
         document_type = "invoice"
     if not contract: raise HTTPException(status_code=404, detail="Document not found")
-    try: actual_hash = hashlib.sha256(read_pdf(contract.pdf_path)).hexdigest()
+    try: actual_hash = hashlib.sha256(read_pdf(contract.pdf_path)).hexdigest() if contract.pdf_path else None
     except (FileNotFoundError, OSError): actual_hash = None
     # The digest itself is safe to publish and lets a recipient independently
     # compare the issued file; no client, project, amount, or storage path is
     # exposed by this public endpoint.
-    return {"number": number, "status": contract.status, "issued": True,
-            "hash": contract.pdf_hash, "hash_valid": actual_hash == contract.pdf_hash}
+    return {"number": number, "status": contract.status, "issued": bool(contract.pdf_path),
+            "hash": contract.pdf_hash,
+            "hash_valid": (bool(actual_hash and contract.pdf_hash and actual_hash == contract.pdf_hash)
+                           if contract.pdf_path else None)}
 
 
 @app.post("/contracts/{document_id}/send")
-def send_contract(document_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)) -> dict:
+def send_contract(document_id: int, db: Session = Depends(get_db)) -> dict:
     document = db.get(Contract, document_id)
     if not document: raise HTTPException(status_code=404, detail="Contract not found")
-    if document.status != "draft": raise HTTPException(status_code=409, detail="Only draft contracts can be sent")
+    if document.archived_at or document.status != "draft": raise HTTPException(status_code=409, detail="Only active draft contracts can be sent")
     terms = json.loads(document.terms_json)
     if not terms.get("client_email"): raise HTTPException(status_code=400, detail="Contract has no client email")
-    document.status = "sent"; db.commit()
-    background_tasks.add_task(send_pdf, terms["client_email"], f"Contract {document.contract_number}", f"{document.contract_number}.pdf", document.pdf_path)
+    pdf = render_pdf("contract.html", contract_render_data(document))
+    location = upload_pdf(document_storage_key("contracts", document.contract_number, pdf), pdf)
+    document.pdf_path = location
+    document.pdf_hash = hashlib.sha256(pdf).hexdigest()
+    delivered = False
+    try:
+        send_pdf(terms["client_email"], f"Contract {document.contract_number}", f"{document.contract_number}.pdf", location)
+        delivered = True
+        document.status = "sent"
+        audit(db, "sent", "contract", document.contract_number)
+        db.commit()
+    except Exception:
+        db.rollback()
+        if not delivered:
+            delete_pdf(location)
+        raise
     return {"number": document.contract_number, "status": document.status}
 
 
 @app.post("/invoices/{document_id}/send")
-def send_invoice(document_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)) -> dict:
+def send_invoice(document_id: int, db: Session = Depends(get_db)) -> dict:
     document = db.get(Invoice, document_id)
     if not document: raise HTTPException(status_code=404, detail="Invoice not found")
-    if document.status != "draft": raise HTTPException(status_code=409, detail="Only draft invoices can be sent")
+    if document.archived_at or document.status != "draft": raise HTTPException(status_code=409, detail="Only active draft invoices can be sent")
     if not document.client_email: raise HTTPException(status_code=400, detail="Invoice has no client email")
-    document.status = "sent"; db.commit()
-    background_tasks.add_task(send_pdf, document.client_email, f"Invoice {document.invoice_number}", f"{document.invoice_number}.pdf", document.pdf_path)
+    document.status = "sent"
+    location = None
+    delivered = False
+    try:
+        pdf = render_pdf("invoice.html", invoice_render_data(db, document))
+        location = upload_pdf(document_storage_key("invoices", document.invoice_number, pdf), pdf)
+        document.pdf_path = location
+        document.pdf_hash = hashlib.sha256(pdf).hexdigest()
+        send_pdf(document.client_email, f"Invoice {document.invoice_number}", f"{document.invoice_number}.pdf", location)
+        delivered = True
+        audit(db, "sent", "invoice", document.invoice_number)
+        db.commit()
+    except Exception:
+        db.rollback()
+        if location and not delivered:
+            delete_pdf(location)
+        raise
     return {"number": document.invoice_number, "status": document.status}
 
 
@@ -727,7 +936,11 @@ def send_invoice(document_id: int, background_tasks: BackgroundTasks, db: Sessio
 def mark_contract_accepted(document_id: int, db: Session = Depends(get_db)) -> dict:
     document = db.get(Contract, document_id)
     if not document: raise HTTPException(status_code=404, detail="Contract not found")
-    document.status = "accepted"; document.accepted_at = datetime.now(timezone.utc); db.commit()
+    if document.archived_at or document.status != "sent":
+        raise HTTPException(status_code=409, detail="Only active sent contracts can be accepted")
+    document.status = "accepted"; document.accepted_at = datetime.now(timezone.utc)
+    audit(db, "accepted", "contract", document.contract_number)
+    db.commit()
     return {"number": document.contract_number, "status": document.status, "accepted_at": document.accepted_at}
 
 

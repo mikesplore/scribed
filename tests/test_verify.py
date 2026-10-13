@@ -11,5 +11,6 @@ def test_verify_confirms_pdf_integrity(tmp_path, monkeypatch):
     document = session.query(__import__("app.models", fromlist=["Invoice"]).Invoice).order_by(__import__("app.models", fromlist=["Invoice"]).Invoice.id.desc()).first()
     result = verify_document(document.invoice_number, session)
     assert response.body.startswith(b"%PDF")
-    assert len(result["hash"]) == 64
-    assert result["hash_valid"] is True
+    assert result["issued"] is False
+    assert result["hash"] is None
+    assert result["hash_valid"] is None

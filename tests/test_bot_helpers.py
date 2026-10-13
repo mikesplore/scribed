@@ -1,7 +1,9 @@
 from decimal import Decimal
+from types import SimpleNamespace
 import httpx
+import pytest
 
-from bot import api_error, friendly_json, payment_summary
+from bot import api_error, friendly_json, owner_only, payment_summary, transition_path
 
 
 def test_friendly_json_formats_transition_response():
@@ -34,3 +36,22 @@ def test_payment_summary_uses_successful_payments_only():
     )
     assert paid == Decimal("25000")
     assert balance == Decimal("100000")
+
+
+def test_bot_only_accepts_owner_in_private_chat():
+    from bot import OWNER_ID
+    owner = SimpleNamespace(effective_user=SimpleNamespace(id=OWNER_ID),
+                             effective_chat=SimpleNamespace(type="private"))
+    group = SimpleNamespace(effective_user=SimpleNamespace(id=OWNER_ID),
+                            effective_chat=SimpleNamespace(type="group"))
+    assert owner_only(owner)
+    assert not owner_only(group)
+
+
+def test_transition_commands_reject_wrong_document_type():
+    assert transition_path("send", "invoice", 3) == "/invoices/3/send"
+    assert transition_path("accepted", "contract", 3) == "/contracts/3/mark-accepted"
+    with pytest.raises(ValueError):
+        transition_path("accepted", "invoice", 3)
+    with pytest.raises(ValueError):
+        transition_path("paid", "contract", 3)

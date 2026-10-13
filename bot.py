@@ -43,8 +43,11 @@ API_HEADERS = {"Authorization": f"Bearer {os.environ['SCRIBED_API_TOKEN']}"}
 HTTP_TIMEOUT = httpx.Timeout(20.0)
 
 def valid_amount(value: str) -> bool:
-    try: return Decimal(value.strip()) > 0
-    except (InvalidOperation, ValueError): return False
+    try:
+        amount = Decimal(value.strip())
+        return amount.is_finite() and amount > 0 and amount <= Decimal("999999999999.99") and amount.as_tuple().exponent >= -2
+    except (InvalidOperation, ValueError):
+        return False
 
 def valid_number(value: str) -> bool:
     return bool(__import__("re").fullmatch(r"MK-(?:CON|INV)-\d{4,}", value.strip(), __import__("re").IGNORECASE))
@@ -120,7 +123,20 @@ async def reply_in_chunks(target, text: str) -> None:
         await target.reply_text(text[start:start + 3900])
 
 def owner_only(update: Update) -> bool:
-    return bool(update.effective_user and update.effective_user.id == OWNER_ID)
+    chat = update.effective_chat
+    return bool(update.effective_user and update.effective_user.id == OWNER_ID
+                and chat and chat.type == "private")
+
+
+def transition_path(action: str, document_type: str, document_id: int) -> str:
+    """Map a command to a compatible document transition."""
+    if action == "send" and document_type in {"contract", "invoice"}:
+        return f"/{document_type}s/{document_id}/send"
+    if action == "accepted" and document_type == "contract":
+        return f"/contracts/{document_id}/mark-accepted"
+    if action == "paid" and document_type == "invoice":
+        return f"/invoices/{document_id}/mark-paid"
+    raise ValueError(f"/{action} is not available for {document_type}s")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not owner_only(update): return
@@ -278,7 +294,8 @@ async def begin_project_document(update: Update, context: ContextTypes.DEFAULT_T
         "client_name": project.get("clientName") or project.get("client_name"),
         "client_email": project.get("clientEmail") or project.get("client_email") or project.get("email"),
         "project_name": project.get("name") or project.get("projectName") or project.get("project_name"),
-        "amount": str(balance) if balance is not None and balance > 0 else None,
+        "amount": str((balance + paid) if kind == "contract" and balance is not None else balance)
+                  if balance is not None and (balance > 0 or (kind == "contract" and paid > 0)) else None,
         "currency": project.get("currency"),
         "payment_portal_url": project.get("paymentPortalUrl") or project.get("payment_portal_url") or project.get("paymentUrl"),
     }
@@ -728,8 +745,12 @@ async def transition(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             await update.message.reply_text(f"Could not find document: {api_error(info)}"); return
         data = info.json()
         action = update.message.text.split()[0].lstrip("/")
-        paths = {"send": f"/{data['type']}s/{data['id']}/send", "accepted": f"/contracts/{data['id']}/mark-accepted", "paid": f"/invoices/{data['id']}/mark-paid"}
-        response = await api.post(paths[action])
+        try:
+            path = transition_path(action, data["type"], data["id"])
+        except ValueError as exc:
+            await update.message.reply_text(str(exc))
+            return
+        response = await api.post(path)
     await update.message.reply_text(friendly_json(response, "updated") if response.is_success else f"Could not update document: {api_error(response)}")
 
 def build_application() -> Application:

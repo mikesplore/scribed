@@ -47,3 +47,17 @@ def test_invalid_amount_is_rejected():
     import pytest
     with pytest.raises(ValueError):
         InvoiceRequest(client_name="Ada", project_name="X", description="X", amount=0)
+
+
+def test_invoice_rejects_unsafe_or_malformed_input():
+    import pytest
+    with pytest.raises(ValueError):
+        InvoiceRequest(client_name="Ada", project_name="X", description="X", amount="Infinity")
+    with pytest.raises(ValueError):
+        InvoiceRequest(client_name="Ada", project_name="X", description="X", amount="1.001")
+    with pytest.raises(ValueError):
+        InvoiceRequest(client_name="Ada", project_name="X", description="X", amount=1,
+                       client_email="not-an-email")
+    with pytest.raises(ValueError):
+        InvoiceRequest(client_name="Ada", project_name="X", description="X", amount=1,
+                       payment_portal_url="javascript:alert(1)")
