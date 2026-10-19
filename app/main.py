@@ -478,31 +478,52 @@ def ensure_gatekeeper_invoice(request: InvoiceRequest, db: Session = Depends(get
     if not invoice:
         raise HTTPException(status_code=502, detail="Scribed failed to persist the Gatekeeper invoice")
     terms = json.loads(invoice.terms_json or "{}")
+    sync_fingerprint = fingerprint(request.model_dump())
+    was_synced = terms.get("_ensure_fingerprint") == sync_fingerprint
     invoice_total = request.original_amount or request.amount
     gatekeeper_paid = request.amount_paid or Decimal("0")
-    if gatekeeper_paid > invoice_total:
-        raise HTTPException(status_code=409, detail="Recorded payments exceed the invoice total")
     terms.update(request.model_dump(exclude_none=True))
-    terms.update(amount=invoice_total, original_amount=invoice_total, amount_paid=gatekeeper_paid,
-                 total_paid=gatekeeper_paid, outstanding_balance=invoice_total - gatekeeper_paid)
     terms["invoice_number"] = invoice.invoice_number
-    recorded_paid = sum((Decimal(str(item.amount)) for item in db.query(Payment).filter_by(invoice_id=invoice.id).all()), Decimal("0"))
+    terms["_ensure_fingerprint"] = sync_fingerprint
+    adjustments = db.query(InvoiceAdjustment).filter_by(invoice_id=invoice.id).all()
+    total_adjustments = sum(
+        (Decimal(str(item.amount)) if item.type == "ADDITIONAL_CHARGE" else -Decimal(str(item.amount))
+         for item in adjustments),
+        Decimal("0"),
+    )
+    if not adjustments:
+        # Older ledger syncs stored only the aggregate. Keep that value until
+        # adjustment rows are available instead of silently discarding it.
+        total_adjustments = Decimal(str(invoice.total_adjustments or 0))
+    total_due = invoice_total + total_adjustments
+    recorded_paid = sum(
+        (Decimal(str(item.amount)) for item in db.query(Payment).filter_by(invoice_id=invoice.id).all()),
+        Decimal("0"),
+    )
+    total_paid = max(recorded_paid, gatekeeper_paid)
+    if total_due < 0 or total_paid > total_due:
+        raise HTTPException(status_code=409, detail="Recorded payments exceed the invoice total")
     invoice.client_name = request.client_name
     invoice.client_email = request.client_email
     invoice.project_name = request.project_name
     invoice.gatekeeper_project_id = project_id
-    invoice.amount = invoice_total
     invoice.base_amount = invoice_total
-    invoice.total_payments = max(recorded_paid, gatekeeper_paid)
-    invoice.outstanding_balance = max(Decimal("0"), invoice_total - Decimal(str(invoice.total_payments)))
+    invoice.total_adjustments = total_adjustments
+    invoice.amount = total_due
+    invoice.total_payments = total_paid
+    invoice.outstanding_balance = max(Decimal("0"), total_due - total_paid)
     invoice.currency = request.currency
     invoice.status = "paid" if invoice.outstanding_balance == 0 else ("partially_paid" if invoice.total_payments > 0 else "sent")
+    terms.update(amount=total_due, original_amount=invoice_total, amount_paid=total_paid,
+                 total_paid=total_paid, outstanding_balance=invoice.outstanding_balance,
+                 total_adjustments=total_adjustments)
     invoice.terms_json = json.dumps(terms, default=str)
     refresh_invoice_pdf(db, invoice)
     audit(db, "gatekeeper_invoice_synced", "invoice", invoice.invoice_number, f"project_id={project_id}")
     db.commit()
     return {"invoice": {"id": invoice.id, "number": invoice.invoice_number, "status": invoice.status,
-                         "amount": str(invoice.amount), "currency": invoice.currency}}
+                         "amount": str(invoice.amount), "currency": invoice.currency},
+            "idempotent": was_synced}
 
 
 @app.get("/integrations/gatekeeper/invoices/{gatekeeper_project_id}")
