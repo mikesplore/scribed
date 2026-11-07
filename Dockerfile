@@ -6,7 +6,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app app
 COPY alembic.ini .
 COPY alembic alembic
-COPY bot.py .
 COPY docker-start.sh .
 RUN chmod +x docker-start.sh
 EXPOSE 9005

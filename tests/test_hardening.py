@@ -5,17 +5,16 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from app import db
-from app.main import (MAX_BODY, mark_contract_accepted, require_api_token, send_contract,
-                      sync_gatekeeper_ledger, telegram_webhook)
-from app.models import Contract, Invoice
-from app.schemas import ContractRequest, InvoiceRequest, LedgerSyncRequest
+from app.main import MAX_BODY, mark_contract_accepted, require_api_token, send_contract
+from app.models import Contract
+from app.schemas import ContractRequest
 
 
 def make_request(body: bytes = b"", headers: list[tuple[bytes, bytes]] | None = None) -> Request:
     scope = {
         "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
-        "method": "POST", "scheme": "http", "path": "/telegram/webhook",
-        "raw_path": b"/telegram/webhook", "query_string": b"", "headers": headers or [],
+        "method": "POST", "scheme": "http", "path": "/test",
+        "raw_path": b"/test", "query_string": b"", "headers": headers or [],
         "client": ("127.0.0.1", 1234), "server": ("localhost", 8000),
     }
 
@@ -23,19 +22,6 @@ def make_request(body: bytes = b"", headers: list[tuple[bytes, bytes]] | None = 
         return {"type": "http.request", "body": body, "more_body": False}
 
     return Request(scope, receive)
-
-
-def test_webhook_requires_configured_secret(monkeypatch):
-    import app.main as main
-    monkeypatch.setattr(main, "telegram_application", object())
-    monkeypatch.delenv("TELEGRAM_WEBHOOK_SECRET", raising=False)
-
-    async def run():
-        with pytest.raises(HTTPException) as error:
-            await telegram_webhook(make_request())
-        assert error.value.status_code == 503
-
-    asyncio.run(run())
 
 
 def test_chunked_request_body_is_limited_without_content_length():
@@ -48,8 +34,9 @@ def test_chunked_request_body_is_limited_without_content_length():
     asyncio.run(run())
 
 
-def test_chunked_request_body_remains_available_to_the_route():
+def test_chunked_request_body_remains_available_to_the_route(monkeypatch):
     body = b'{"update_id":1}'
+    monkeypatch.setenv("SCRIBED_API_TOKEN", "test-token")
 
     async def route(request):
         assert await request.body() == body
@@ -57,8 +44,39 @@ def test_chunked_request_body_remains_available_to_the_route():
         return JSONResponse({"ok": True})
 
     async def run():
-        response = await require_api_token(make_request(body), route)
+        request = make_request(body, [(b"authorization", b"Bearer test-token")])
+        response = await require_api_token(request, route)
         assert response.status_code == 200
+
+    asyncio.run(run())
+
+
+def test_non_ascii_bearer_token_is_rejected_without_internal_error(monkeypatch):
+    monkeypatch.setenv("SCRIBED_API_TOKEN", "admin-token")
+
+    class Query:
+        def filter_by(self, **_kwargs):
+            return self
+
+        def first(self):
+            return None
+
+    class Session:
+        def query(self, _model):
+            return Query()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("app.main.SessionLocal", Session)
+
+    async def route(_request):
+        raise AssertionError("Unauthorized request must not reach the route")
+
+    async def run():
+        request = make_request(headers=[("authorization", "Bearer admín-token".encode("utf-8"))])
+        response = await require_api_token(request, route)
+        assert response.status_code == 401
 
     asyncio.run(run())
 
@@ -100,23 +118,3 @@ def test_contract_cannot_be_accepted_before_send(tmp_path, monkeypatch):
     assert error.value.status_code == 409
 
 
-def test_ledger_rejects_stale_version_and_accepts_same_version_replay(tmp_path, monkeypatch):
-    monkeypatch.setenv("STORAGE_DIR", str(tmp_path))
-    monkeypatch.setenv("SCRIBED_INTEGRATION_SECRET", "secret")
-    db.init_db()
-    session = db.SessionLocal()
-    from app.main import create_invoice
-    create_invoice(InvoiceRequest(client_name="Ada", project_name="Ledger", description="Build", amount=100,
-                                  gatekeeper_project_id="ledger-project"), session)
-    payload = LedgerSyncRequest(project_id="ledger-project", ledger_version="2", base_amount=100,
-                                outstanding_balance=100, currency="KES")
-    result = sync_gatekeeper_ledger(payload, session, "secret")
-    assert result["idempotent"] is False
-    assert sync_gatekeeper_ledger(payload, session, "secret")["idempotent"] is True
-    stale = LedgerSyncRequest(project_id="ledger-project", ledger_version="1", base_amount=100,
-                              successful_payments=10, outstanding_balance=90, currency="KES")
-    with pytest.raises(HTTPException) as error:
-        sync_gatekeeper_ledger(stale, session, "secret")
-    assert error.value.status_code == 409
-    invoice = session.query(Invoice).one()
-    assert invoice.outstanding_balance == 100

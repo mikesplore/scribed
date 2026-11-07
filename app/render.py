@@ -1,7 +1,9 @@
 from pathlib import Path
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
-from markupsafe import escape
+import multiprocessing
+import os
+import resource
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoescape
@@ -28,26 +30,19 @@ def _decimal_value(value: Any, field: str) -> Decimal:
     return number
 
 
-def render_pdf(template_name: str, fields: dict[str, Any]) -> bytes:
-    """Render a named HTML template to PDF bytes."""
+def _render_pdf(template_name: str, fields: dict[str, Any]) -> bytes:
+    """Render a named HTML template to PDF bytes in the isolated worker."""
     template = environment.get_template(template_name)
     render_fields = dict(fields)
     # QR generation is optional until the verification asset is configured.
     render_fields.setdefault("qr_code_data_uri", "")
-    render_fields.setdefault("amount_paid", None)
-    render_fields.setdefault("original_amount", render_fields.get("amount"))
     render_fields.setdefault("due_date", None)
     render_fields.setdefault("payment_instructions", None)
     render_fields.setdefault("client_email", None)
-    render_fields.setdefault("payments", [])
-    render_fields.setdefault("adjustments", [])
-    render_fields["base_amount"] = render_fields.get("base_amount") or render_fields.get("original_amount") or render_fields.get("amount", 0)
-    render_fields.setdefault("total_adjustments", 0)
-    render_fields.setdefault("outstanding_balance", render_fields.get("amount", 0))
-    for field in ("base_amount", "total_adjustments", "outstanding_balance"):
-        render_fields[field] = _decimal_value(render_fields[field], field)
-    render_fields.setdefault("payment_portal_url", None)
+    render_fields.setdefault("prepared_on_behalf_of", None)
+    render_fields["amount"] = _decimal_value(render_fields.get("amount"), "amount")
     render_fields.setdefault("status", None)
+    render_fields.setdefault("payment_status", None)
     render_fields.setdefault("from_address", "Leisure, Mombasa, 80100")
     render_fields.setdefault("from_phone", "0745434759")
     render_fields.setdefault("from_email", None)
@@ -58,50 +53,67 @@ def render_pdf(template_name: str, fields: dict[str, Any]) -> bytes:
     render_fields.setdefault("client_first_name", client_name.split()[0] if client_name else "Client")
     render_fields.setdefault("items", None)
     if render_fields["items"]:
-        render_fields["items"] = [
-            {**item, "amount": _decimal_value(item.get("amount"), "item amount")}
-            for item in render_fields["items"]
-        ]
+        normalized_items = []
+        for item in render_fields["items"]:
+            amount = _decimal_value(item.get("amount"), "item amount")
+            quantity = _decimal_value(item.get("quantity", 1), "item quantity")
+            unit_price = _decimal_value(item.get("unit_price", amount / quantity), "item unit price")
+            if quantity <= 0:
+                raise ValueError("item quantity must be greater than zero")
+            normalized_items.append({**item, "amount": amount, "quantity": quantity, "unit_price": unit_price})
+        render_fields["items"] = normalized_items
+    render_fields["paid_amount"] = _decimal_value(render_fields.get("paid_amount", 0), "paid_amount")
+    raw_balance = render_fields.get("balance_due")
+    render_fields["balance_due"] = (
+        _decimal_value(raw_balance, "balance_due") if raw_balance is not None
+        else max(render_fields["amount"] - render_fields["paid_amount"], Decimal("0.00"))
+    )
     render_fields.setdefault("invoice_notes", None)
-    for field in ("issue_date", "due_date"):
+    for field in ("issue_date", "due_date", "received_date"):
         value = render_fields.get(field)
         if value:
             try:
                 render_fields[field] = datetime.fromisoformat(str(value)).strftime("%d %b %Y")
             except (TypeError, ValueError):
                 pass
-    render_fields.setdefault("total_paid", render_fields.get("amount_paid") or 0)
-    normalized_payments = []
-    for payment in render_fields["payments"]:
-        item = dict(payment)
-        raw_date = item.get("paidAt") or item.get("createdAt")
-        try:
-            item["display_date"] = datetime.fromisoformat(str(raw_date).replace("Z", "+00:00")).strftime("%d %b %Y")
-        except (TypeError, ValueError):
-            item["display_date"] = "Unknown date"
-        try:
-            item["display_amount"] = f"{float(item.get('amount', 0)):,.2f}"
-        except (TypeError, ValueError):
-            item["display_amount"] = "0.00"
-        normalized_payments.append(item)
-    render_fields["payments"] = normalized_payments
-    paid_value = render_fields.get("total_paid")
-    if paid_value is None:
-        paid_value = render_fields.get("amount_paid") or 0
-    try:
-        render_fields["total_paid"] = f"{float(paid_value or 0):,.2f}"
-    except (TypeError, ValueError):
-        render_fields["total_paid"] = "0.00"
-    bundled_logo = TEMPLATE_DIR / "ScribedLogo.png"
-    render_fields.setdefault(
-        "logo_url",
-        bundled_logo.as_uri() if bundled_logo.is_file() else "",
-    )
+    render_fields.setdefault("logo_url", "")
     html = template.render(**render_fields)
-    # Keep the fixed verification strip clear of the final page's content.
-    html = html.replace("</head>", "<style>@page{margin-bottom:48mm}</style></head>")
-    if render_fields["logo_url"]:
-        logo = f'<img src="{escape(render_fields["logo_url"])}" class="brand-logo" style="max-height:52px;max-width:190px;width:auto;height:auto;display:block" alt="mikesplore">'
-        html = html.replace('<div class="brand-mark">mikesplore</div>', logo)
-        html = html.replace('<div class="brand">mikesplore</div>', logo)
     return HTML(string=html, base_url=str(TEMPLATE_DIR)).write_pdf()
+
+
+def _render_worker(connection, template_name: str, fields: dict[str, Any], memory_limit: int) -> None:
+    try:
+        resource.setrlimit(resource.RLIMIT_AS, (memory_limit, memory_limit))
+        resource.setrlimit(resource.RLIMIT_CPU, (30, 31))
+        connection.send((True, _render_pdf(template_name, fields)))
+    except BaseException as exc:
+        connection.send((False, f"{type(exc).__name__}: {exc}"))
+    finally:
+        connection.close()
+
+
+def render_pdf(template_name: str, fields: dict[str, Any]) -> bytes:
+    """Render with a killable worker and bounded CPU, memory, and wall time."""
+    timeout = max(1, int(os.getenv("PDF_RENDER_TIMEOUT_SECONDS", "25")))
+    memory_limit = max(128, int(os.getenv("PDF_RENDER_MEMORY_MB", "512"))) * 1024 * 1024
+    context = multiprocessing.get_context("fork")
+    parent, child = context.Pipe(duplex=False)
+    worker = context.Process(target=_render_worker,
+                             args=(child, template_name, fields, memory_limit), daemon=True)
+    worker.start()
+    child.close()
+    try:
+        if not parent.poll(timeout):
+            worker.kill()
+            worker.join()
+            raise TimeoutError(f"PDF rendering exceeded {timeout} seconds")
+        succeeded, result = parent.recv()
+        worker.join(timeout=1)
+        if not succeeded:
+            raise RuntimeError(f"PDF rendering failed: {result}")
+        return result
+    finally:
+        parent.close()
+        if worker.is_alive():
+            worker.kill()
+            worker.join()

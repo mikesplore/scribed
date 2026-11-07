@@ -1,287 +1,189 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>Invoice {{ invoice_number }}</title>
-<style>
-  :root{
-    --ink:#1b1b18;
-    --muted:#6b6a63;
-    --hairline:#dcdad2;
-    --paper:#ffffff;
-    --accent:#1f4b43;
-    --overdue:#8a3324;
-    --partial:#8a611c;
-    --font-serif: 'Source Serif 4', ui-serif, Georgia, 'Times New Roman', serif;
-    --font-sans: 'Public Sans', 'IBM Plex Sans', -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
-    --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
-  }
+  <meta charset="utf-8">
+  <title>Invoice {{ invoice_number }}</title>
+  <style>
+    :root {
+      --ink: #17212b;
+      --muted: #65717e;
+      --line: #d8dee5;
+      --accent: #263f5b;
+      --soft: #f5f7f9;
+      --font-sans: 'Inter', 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+      --font-mono: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
+    }
 
-  @page { size: A4; margin: 24mm 20mm 42mm 20mm; }
-  @page { @bottom-right { content: counter(page) " of " counter(pages); font: 8pt var(--font-mono); color: var(--muted); } }
-  * { box-sizing: border-box; }
+    @page {
+      size: A4;
+      margin: 17mm 20mm 24mm;
+      @bottom-right {
+        content: "Page " counter(page) " of " counter(pages);
+        color: #87919b;
+        font: 8pt var(--font-sans);
+      }
+    }
 
-  body{
-    margin:0;
-    background:var(--paper);
-    color:var(--ink);
-    font-family:var(--font-sans);
-    font-size:10.5pt;
-    line-height:1.5;
-  }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--ink); font: 10pt/1.48 var(--font-sans); }
+    .sheet { width: 100%; }
 
-  .topbar{ position:fixed; top:0; left:0; right:0; height:3px; background:var(--ink); }
+    .masthead {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12mm;
+      padding: 7mm 0 6mm;
+      border-top: 2.2mm solid var(--accent);
+      border-bottom: 0.3mm solid var(--line);
+    }
+    .issuer { min-width: 0; }
+    .brand-logo { display: block; max-width: 36mm; max-height: 16mm; width: auto; height: auto; object-fit: contain; object-position: left center; }
+    .brand-mark { color: var(--accent); font-size: 17pt; font-weight: 700; letter-spacing: -0.04em; }
+    .issuer-tagline, .issuer-contact { color: var(--muted); font-size: 8.5pt; }
+    .issuer-tagline { margin-top: 1mm; }
+    .issuer-contact { margin-top: 2mm; line-height: 1.45; }
 
-  /* ---- Watermark ---- */
-  .watermark{
-    position:fixed;
-    top:48%; left:50%;
-    transform:translate(-50%,-50%) rotate(-28deg);
-    font-family:var(--font-serif);
-    font-size:86pt;
-    font-weight:700;
-    letter-spacing:0.06em;
-    opacity:0.06;
-    z-index:0;
-    white-space:nowrap;
-    pointer-events:none;
-  }
-  .wm-paid{ color:var(--accent); }
-  .wm-overdue{ color:var(--overdue); }
-  .wm-due{ color:var(--muted); }
-  .wm-partially_paid{ color:var(--partial); }
+    .doc-meta { min-width: 64mm; text-align: right; }
+    .doc-title { margin: -1.5mm 0 4mm; color: var(--accent); font-size: 24pt; font-weight: 650; letter-spacing: 0.02em; line-height: 1; }
+    table.meta-grid { margin: 0 0 0 auto; border-collapse: collapse; }
+    .meta-grid td { padding: 0.6mm 0 0.6mm 6mm; vertical-align: baseline; }
+    .meta-label { color: var(--muted); font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.06em; text-align: left; }
+    .meta-value { font-size: 9pt; text-align: right; overflow-wrap: anywhere; }
+    .meta-value.number { font-family: var(--font-mono); font-size: 8.5pt; }
+    .status-badge { display: inline-block; padding: 1mm 2.5mm; border: 0.25mm solid #b9c6d3; border-radius: 2mm; color: var(--accent); font-size: 7.5pt; font-weight: 650; text-transform: uppercase; letter-spacing: 0.04em; }
 
-  .sheet{ position:relative; z-index:1; max-width: 720px; margin: 0 auto; padding: 36px 4px; }
+    .prepared { margin: 4mm 0 0; color: var(--muted); font-size: 8pt; text-align: right; }
+    .prepared strong { color: var(--ink); font-weight: 600; }
 
-  /* ---- Header ---- */
-  .masthead{
-    display:flex;
-    justify-content:space-between;
-    align-items:flex-start;
-    gap:24px;
-    padding-bottom:18px;
-    border-bottom:1px solid var(--hairline);
-  }
-  .brand-mark{ font-family:var(--font-serif); font-size:18pt; font-weight:600; letter-spacing:0.01em; }
-  .brand-logo{ max-height:52px; max-width:200px; width:auto; height:auto; display:block; }
-  .brand-tagline{ margin-top:5px; color:var(--muted); font-size:9pt; }
+    .parties { display: flex; gap: 12mm; margin: 9mm 0 10mm; }
+    .party { flex: 1; min-width: 0; padding-top: 3mm; border-top: 0.45mm solid var(--line); }
+    .party.bill-to { padding-left: 7mm; border-left: 0.25mm solid var(--line); }
+    .label { color: var(--muted); font-size: 7.5pt; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+    .party .name { margin: 2mm 0 1mm; font-size: 11pt; font-weight: 650; }
+    .contact { color: var(--muted); font-size: 9pt; overflow-wrap: anywhere; }
+    .project-name { margin-top: 2mm; color: var(--muted); font-size: 8.5pt; }
 
-  .doc-meta{ text-align:right; min-width:190px; }
-  .doc-title{ font-family:var(--font-serif); font-size:15pt; letter-spacing:-0.01em; margin:0 0 8px; }
-  .meta-row{ display:flex; justify-content:flex-end; gap:8px; font-size:9pt; color:var(--muted); white-space:nowrap; }
-  .meta-row + .meta-row{ margin-top:3px; }
-  .meta-row .val{ font-family:var(--font-mono); color:var(--ink); min-width:108px; text-align:right; }
+    .prepared-profile { margin: -5mm 0 8mm; padding: 2mm 0; border-bottom: 0.2mm solid var(--line); color: var(--muted); font-size: 8pt; }
+    .prepared-profile strong { color: var(--ink); font-weight: 600; }
 
-  .status-badge{
-    display:inline-block;
-    margin-top:10px;
-    padding:2px 10px;
-    font-size:8.5pt;
-    font-weight:600;
-    letter-spacing:0.04em;
-    text-transform:uppercase;
-    border:1px solid currentColor;
-  }
-  .status-paid{ color:var(--accent); }
-  .status-due{ color:var(--muted); }
-  .status-overdue{ color:var(--overdue); }
-  .status-partially_paid{ color:var(--partial); }
+    table.items { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    table.items col.desc { width: 49%; }
+    table.items col.qty { width: 10%; }
+    table.items col.unit { width: 20%; }
+    table.items col.total { width: 21%; }
+    table.items thead { display: table-header-group; }
+    table.items th { padding: 2.5mm 2mm; background: var(--soft); border-top: 0.35mm solid var(--line); border-bottom: 0.35mm solid var(--line); color: #485565; font-size: 7.5pt; font-weight: 650; letter-spacing: 0.05em; text-align: left; text-transform: uppercase; }
+    table.items th:first-child, table.items td:first-child { padding-left: 3mm; }
+    table.items th:last-child, table.items td:last-child { padding-right: 3mm; }
+    table.items th.numeric, table.items td.numeric { text-align: right; }
+    table.items td { padding: 4mm 2mm; border-bottom: 0.25mm solid var(--line); vertical-align: top; page-break-inside: avoid; }
+    .item-name { font-weight: 600; }
+    .item-description { margin-top: 1mm; color: var(--muted); font-size: 8.5pt; }
+    .money, .quantity { font-family: var(--font-mono); font-size: 8.5pt; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
-  /* ---- Bill to ---- */
-  .parties{ padding:20px 0 22px; border-bottom:1px solid var(--hairline); }
-  .parties .label{ color:var(--muted); font-size:8.5pt; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:6px; }
-  .parties .name{ font-weight:600; }
-  .parties .contact{ color:var(--muted); font-size:9.5pt; }
-  .party-grid{ display:flex; justify-content:space-between; gap:40px; }
+    .totals { width: 78mm; margin: 5mm 0 0 auto; page-break-inside: avoid; }
+    table.summary { width: 100%; border-collapse: collapse; }
+    table.summary td { padding: 1.5mm 1mm; }
+    table.summary td:first-child { color: var(--muted); }
+    table.summary td:last-child { font-family: var(--font-mono); font-size: 9pt; text-align: right; white-space: nowrap; }
+    table.summary .balance-due td { padding-top: 3mm; border-top: 0.4mm solid var(--accent); color: var(--ink); font-size: 10pt; font-weight: 700; }
 
-  /* ---- Ledger tables (line items / payments) ---- */
-  table.items, table.payments{ width:100%; border-collapse:collapse; table-layout:fixed; }
-  table.items{ margin-top:22px; }
-  table.payments{ margin-top:24px; font-size:9.5pt; }
-  table.items colgroup .col-desc{ width:72%; }
-  table.items colgroup .col-amount{ width:28%; }
-  table.payments colgroup .col-date{ width:30%; }
-  table.payments colgroup .col-status{ width:35%; }
-  table.payments colgroup .col-amount{ width:35%; }
+    .terms { display: flex; gap: 12mm; margin-top: 10mm; padding-top: 4mm; border-top: 0.25mm solid var(--line); page-break-inside: avoid; }
+    .terms > div { flex: 1; min-width: 0; }
+    .terms .value { margin-top: 1mm; font-size: 9pt; overflow-wrap: anywhere; }
+    .notes { margin-top: 6mm; padding-top: 4mm; border-top: 0.2mm solid var(--line); color: var(--muted); font-size: 8.5pt; page-break-inside: avoid; }
+    .notes .label { margin-bottom: 1mm; color: var(--ink); }
 
-  table.items thead th, table.payments thead th{
-    text-align:left;
-    font-weight:600;
-    color:var(--muted);
-    font-size:8.5pt;
-    text-transform:uppercase;
-    letter-spacing:0.05em;
-    padding:0 0 8px;
-    border-bottom:1.5px solid var(--ink);
-  }
-  table.items thead th.amount-col, table.payments thead th.amount-col{ text-align:right; }
-
-  table.items tbody td, table.payments tbody td{
-    padding:12px 0;
-    border-bottom:1px solid var(--hairline);
-    vertical-align:top;
-    overflow-wrap:break-word;
-    page-break-inside:avoid;
-  }
-  table.items tbody td.amount-col, table.payments tbody td.amount-col{
-    text-align:right;
-    font-family:var(--font-mono);
-    font-variant-numeric: tabular-nums;
-    white-space:nowrap;
-    padding-left:16px;
-  }
-  table.items tbody td .contact, table.payments tbody td .contact{ margin-top:2px; }
-
-  /* ---- Summary (ledger totals) ---- */
-  table.summary{ width:100%; border-collapse:collapse; margin-top:20px; margin-left:auto; max-width:340px; }
-  table.summary th, table.summary td{ padding:6px 0; text-align:right; font-size:9.5pt; }
-  table.summary th{ text-align:left; font-weight:500; color:var(--muted); }
-  table.summary td{ font-family:var(--font-mono); font-variant-numeric: tabular-nums; }
-  table.summary .balance{ border-top:3px double var(--ink); }
-  table.summary .balance th{ padding-top:12px; font-weight:700; color:var(--ink); font-size:10.5pt; }
-  table.summary .balance td{ padding-top:12px; color:var(--accent); font-size:15pt; font-weight:700; letter-spacing:-0.01em; }
-
-  /* ---- Payment details / notes ---- */
-  .notes{
-    margin-top:24px;
-    padding:12px 0;
-    border-top:1px solid var(--hairline);
-    font-size:9.5pt;
-    color:var(--muted);
-  }
-  .notes .label{ color:var(--ink); font-weight:600; font-size:8.5pt; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:4px; }
-  .notes a{ color:var(--accent); }
-  .notes + .notes{ margin-top:14px; border-top:none; padding-top:0; }
-
-  /* ---- Footer / verification strip ---- */
-  .verify{
-    position:fixed;
-    bottom:10mm; left:20mm; right:20mm;
-    z-index:1;
-    display:flex; align-items:center; justify-content:space-between;
-    padding-top:10px;
-    border-top:1px solid var(--hairline);
-    font-family:var(--font-mono);
-    font-size:8pt;
-    color:var(--muted);
-  }
-  .verify-left{ display:flex; align-items:center; gap:8px; }
-  .verify-left img{ width:32px; height:32px; }
-</style>
+    .verify { position: fixed; right: 20mm; bottom: 0; left: 20mm; padding-top: 2.5mm; border-top: 0.2mm solid var(--line); color: #87919b; font-size: 7.5pt; }
+    .verify a { color: #65717e; text-decoration: none; }
+    .verify img { width: 8mm; height: 8mm; margin-right: 2mm; vertical-align: middle; }
+  </style>
 </head>
 <body>
-  <div class="topbar"></div>
-
-  {% set wm_text = {'paid': 'PAID', 'overdue': 'OVERDUE', 'due': 'UNPAID', 'partially_paid': 'PARTIAL'}.get(status) %}
-  {% if wm_text %}<div class="watermark wm-{{ status }}">{{ wm_text }}</div>{% endif %}
-
-  <div class="sheet">
-
+  <main class="sheet">
     <header class="masthead">
-      <div>
-        {% if logo_url %}
-          <img src="{{ logo_url }}" class="brand-logo" alt="{{ from_name|default('mikesplore') }}">
-        {% else %}
-          <div class="brand-mark">{{ from_name|default('mikesplore') }}</div>
-        {% endif %}
+      <div class="issuer">
+        {% if logo_url %}<img src="{{ logo_url }}" class="brand-logo" alt="{{ from_name }}">
+        {% else %}<div class="brand-mark">{{ from_name|default('mikesplore') }}</div>{% endif %}
+        {% if from_tagline %}<div class="issuer-tagline">{{ from_tagline }}</div>{% endif %}
+        <div class="issuer-contact">{% if from_address %}{{ from_address }}{% endif %}{% if from_phone %}<br>{{ from_phone }}{% endif %}{% if from_email %}<br>{{ from_email }}{% endif %}</div>
       </div>
       <div class="doc-meta">
-        <p class="doc-title">Invoice</p>
-        <div class="meta-row"><span>Invoice no.</span><span class="val">{{ invoice_number }}</span></div>
-        <div class="meta-row"><span>Issued</span><span class="val">{{ issue_date }}</span></div>
-        {% if due_date %}<div class="meta-row"><span>Due</span><span class="val">{{ due_date }}</span></div>{% endif %}
-        {% if status %}<span class="status-badge status-{{ status }}">{{ status|replace('_', ' ')|title }}</span>{% endif %}
+        <h1 class="doc-title">Invoice</h1>
+        <table class="meta-grid"><tbody>
+          <tr><td class="meta-label">Invoice no.</td><td class="meta-value number">{{ invoice_number }}</td></tr>
+          <tr><td class="meta-label">Issued</td><td class="meta-value">{{ issue_date }}</td></tr>
+          {% if due_date %}<tr><td class="meta-label">Due</td><td class="meta-value">{{ due_date }}</td></tr>{% endif %}
+          {% if payment_status %}<tr><td class="meta-label">Payment</td><td class="meta-value"><span class="status-badge">{{ payment_status|replace('_', ' ')|title }}</span></td></tr>
+          {% elif status %}<tr><td class="meta-label">Status</td><td class="meta-value"><span class="status-badge">{{ status|replace('_', ' ')|title }}</span></td></tr>{% endif %}
+        </tbody></table>
+        {% if prepared_on_behalf_of %}<div class="prepared">Prepared on behalf of <strong>{{ prepared_on_behalf_of.name }}</strong></div>{% endif %}
       </div>
     </header>
 
-    <section class="parties"><div class="party-grid">
-      <div>
+    <section class="parties">
+      <div class="party">
         <div class="label">From</div>
         <div class="name">{{ from_name|default('mikesplore') }}</div>
-        <div class="contact">{{ from_tagline|default('Independent digital work') }}</div>
+        {% if from_tagline %}<div class="contact">{{ from_tagline }}</div>{% endif %}
         {% if from_address %}<div class="contact">{{ from_address }}</div>{% endif %}
-        {% if from_phone or from_tax_id %}
-        <div class="contact">
-          {% if from_phone %}{{ from_phone }}{% if from_tax_id %} &middot; {% endif %}{% endif %}
-          {% if from_tax_id %}Tax ID {{ from_tax_id }}{% endif %}
-        </div>
-        {% endif %}
+        {% if from_phone %}<div class="contact">{{ from_phone }}</div>{% endif %}
+        {% if from_email %}<div class="contact">{{ from_email }}</div>{% endif %}
       </div>
-      <div>
+      <div class="party bill-to">
         <div class="label">Bill to</div>
         <div class="name">{{ client_name }}</div>
         {% if client_email %}<div class="contact">{{ client_email }}</div>{% endif %}
+        <div class="project-name">{{ project_name }}</div>
       </div>
-    </div>
     </section>
 
     <table class="items">
-      <colgroup><col class="col-desc"><col class="col-amount"></colgroup>
-      <thead>
-        <tr>
-          <th>Description</th>
-          <th class="amount-col">Amount ({{ currency }})</th>
-        </tr>
-      </thead>
+      <colgroup><col class="desc"><col class="qty"><col class="unit"><col class="total"></colgroup>
+      <thead><tr>
+        <th>Description</th><th class="numeric">Qty</th>
+        <th class="numeric">Unit price ({{ currency }})</th><th class="numeric">Total ({{ currency }})</th>
+      </tr></thead>
       <tbody>
         {% if items %}
           {% for item in items %}
           <tr>
-            <td>
-              {{ item.name }}
-              {% if item.description %}<div class="contact">{{ item.description }}</div>{% endif %}
-            </td>
-            <td class="amount-col">{{ "{:,.2f}".format(item.amount) }}</td>
+            <td><div class="item-name">{{ item.name }}</div></td>
+            <td class="numeric quantity">{{ item.quantity|default(1) }}</td>
+            <td class="numeric money">{{ "{:,.2f}".format(item.unit_price|default(item.amount)) }}</td>
+            <td class="numeric money">{{ "{:,.2f}".format(item.amount) }}</td>
           </tr>
           {% endfor %}
         {% else %}
-        <tr>
-          <td>{{ project_name }}{% if description %}<div class="contact">{{ description }}</div>{% endif %}</td>
-          <td class="amount-col">{{ "{:,.2f}".format(base_amount) }}</td>
-        </tr>
-        {% for item in adjustments %}<tr><td>{{ item.label }}{% if item.reason %}<div class="contact">{{ item.reason }}</div>{% endif %}</td><td class="amount-col">{{ item.display_amount }}</td></tr>{% endfor %}
+          <tr>
+            <td><div class="item-name">{{ project_name }}</div>{% if description %}<div class="item-description">{{ description }}</div>{% endif %}</td>
+            <td class="numeric quantity">1</td><td class="numeric money">{{ "{:,.2f}".format(amount) }}</td><td class="numeric money">{{ "{:,.2f}".format(amount) }}</td>
+          </tr>
         {% endif %}
       </tbody>
     </table>
 
-    {% if payments %}
-    <table class="payments">
-      <colgroup><col class="col-date"><col class="col-status"><col class="col-amount"></colgroup>
-      <thead><tr><th>Date</th><th>Status</th><th class="amount-col">Amount ({{ currency }})</th></tr></thead>
-      <tbody>{% for payment in payments if payment.status|lower in ['paid', 'success', 'successful', 'completed'] %}
-        <tr><td>{{ payment.display_date }}</td><td>{{ payment.status|capitalize }}</td><td class="amount-col">{{ payment.display_amount }}</td></tr>
-      {% endfor %}</tbody>
-    </table>
-    {% endif %}
+    <section class="totals">
+      <table class="summary"><tbody>
+        <tr><td>Invoice total</td><td>{{ currency }} {{ "{:,.2f}".format(amount) }}</td></tr>
+        {% if paid_amount and paid_amount > 0 %}<tr><td>Paid to date</td><td>− {{ currency }} {{ "{:,.2f}".format(paid_amount) }}</td></tr>{% endif %}
+        <tr class="balance-due"><td>Balance due</td><td>{{ currency }} {{ "{:,.2f}".format(balance_due if balance_due is not none else amount) }}</td></tr>
+      </tbody></table>
+    </section>
 
-    <table class="summary"><tbody>
-      <tr><th>Original charge</th><td>{{ "{:,.2f}".format(base_amount) }}</td></tr>
-      <tr><th>Adjustments</th><td>{{ "{:,.2f}".format(total_adjustments) }}</td></tr>
-      <tr><th>Total paid</th><td>({{ total_paid }})</td></tr>
-      <tr class="balance"><th>Balance due ({{ currency }})</th><td>{{ "{:,.2f}".format(outstanding_balance) }}</td></tr>
-    </tbody></table>
+    <section class="terms">
+      <div><div class="label">How to pay</div><div class="value">{{ payment_instructions|default('Log in to your portal using your email address to pay.', true) }}</div></div>
+    </section>
 
-    {% if payment_instructions or payment_portal_url %}
-    <div class="notes">
-      <div class="label">Payment details</div>
-      {% if payment_portal_url %}<div>Pay the current balance through Gatekeeper: <a href="{{ payment_portal_url }}">{{ payment_portal_url }}</a></div>{% else %}<div>Payment details will be provided upon request.</div>{% endif %}
-    </div>
-    {% endif %}
+    {% if invoice_notes %}<section class="notes"><div class="label">Notes</div>{{ invoice_notes }}</section>{% endif %}
+  </main>
 
-    {% if invoice_notes %}
-    <div class="notes">
-      <div class="label">Notes</div>
-      <div>{{ invoice_notes }}</div>
-    </div>
-    {% endif %}
-
-  </div>
-
-  <div class="verify">
-    <div class="verify-left">
-      {% if qr_code_data_uri %}<img src="{{ qr_code_data_uri }}" alt="Verify this document">{% endif %}
-      <span>Verify at scribed.mikesplore.me/verify/{{ invoice_number }}</span>
-    </div>
-  </div>
+  {% if verification_url|default('') %}
+  <footer class="verify">
+    {% if qr_code_data_uri %}<img src="{{ qr_code_data_uri }}" alt="">{% endif %}
+    <a href="{{ verification_url }}">Verify this invoice · {{ verification_url|replace('https://', '')|replace('http://', '') }}</a>
+  </footer>
+  {% endif %}
 </body>
 </html>

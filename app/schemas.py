@@ -1,9 +1,8 @@
 from datetime import date
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 from typing import Annotated
-from urllib.parse import urlsplit
 import re
 
 DocumentNumber = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,50}$")]
@@ -15,7 +14,7 @@ MAX_MONEY = Decimal("999999999999.99")
 class RequestModel(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    @field_validator("amount", "original_amount", "amount_paid", check_fields=False)
+    @field_validator("amount", check_fields=False)
     @classmethod
     def finite_money(cls, value):
         if value is not None and (not value.is_finite() or value.as_tuple().exponent < -2):
@@ -27,6 +26,22 @@ class RequestModel(BaseModel):
     def valid_email(cls, value):
         if value is not None and (len(value) > 254 or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value)):
             raise ValueError("client_email must be a valid email address")
+        return value
+
+
+class APIClientRegistration(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    name: Annotated[str, StringConstraints(min_length=1, max_length=120)]
+    address: Annotated[str, StringConstraints(max_length=1000)] | None = None
+    contact_email: Annotated[str, StringConstraints(max_length=254)] | None = None
+    phone: Annotated[str, StringConstraints(max_length=40)] | None = None
+
+    @field_validator("contact_email")
+    @classmethod
+    def valid_contact_email(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value):
+            raise ValueError("contact_email must be a valid email address")
         return value
 
 
@@ -46,7 +61,6 @@ class ContractRequest(RequestModel):
     revision_rounds: int = Field(default=3, ge=0, le=20)
     effective_date: date = Field(default_factory=date.today)
     contract_number: DocumentNumber = Field(default="DRAFT-CONTRACT")
-    gatekeeper_project_id: str | None = Field(default=None, max_length=64)
 
 
 class InvoiceRequest(RequestModel):
@@ -59,24 +73,22 @@ class InvoiceRequest(RequestModel):
     issue_date: date = Field(default_factory=date.today)
     due_date: date | None = None
     invoice_number: DocumentNumber = Field(default="DRAFT-INVOICE")
-    payment_instructions: Annotated[str, StringConstraints(max_length=2000)] = "Payment details will be shared by email."
-    gatekeeper_project_id: str | None = Field(default=None, max_length=64)
-    gatekeeper_service_id: str | None = Field(default=None, max_length=64)
-    original_amount: Decimal | None = Field(default=None, gt=0, le=MAX_MONEY)
-    amount_paid: Decimal | None = Field(default=None, ge=0, le=MAX_MONEY)
-    payments: list[dict] = Field(default_factory=list, max_length=100)
-    payment_portal_url: str | None = Field(default=None, max_length=2048)
+    payment_instructions: Annotated[str, StringConstraints(max_length=2000)] = "Log in to your portal using your email address to pay."
     items: list[dict] | None = Field(default=None, max_length=100)
+    paid_amount: Decimal = Field(default=Decimal("0.00"), ge=0, le=MAX_MONEY)
+    balance_due: Decimal | None = Field(default=None, ge=0, le=MAX_MONEY)
+    payment_status: Annotated[str, StringConstraints(max_length=24)] | None = None
 
-    @field_validator("payment_portal_url")
-    @classmethod
-    def secure_payment_url(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        parts = urlsplit(value)
-        if parts.scheme != "https" or not parts.hostname or parts.username or parts.password:
-            raise ValueError("payment_portal_url must be an HTTPS URL without embedded credentials")
-        return value
+    @model_validator(mode="after")
+    def validate_balance_due(self):
+        expected = max(self.amount - self.paid_amount, Decimal("0.00"))
+        if self.balance_due is not None and self.balance_due != expected:
+            raise ValueError("balance_due must equal amount less paid_amount, floored at zero")
+        if self.payment_status not in {None, "unpaid", "partially_paid", "paid"}:
+            raise ValueError("payment_status must be unpaid, partially_paid, or paid")
+        if self.items is not None and sum((item["amount"] for item in self.items), Decimal("0.00")) != self.amount:
+            raise ValueError("invoice item totals must add up to the invoice amount")
+        return self
 
     @field_validator("items")
     @classmethod
@@ -91,9 +103,24 @@ class InvoiceRequest(RequestModel):
                 amount = Decimal(str(raw_amount))
             except Exception as exc:
                 raise ValueError("each invoice item needs a numeric amount") from exc
-            if not amount.is_finite() or amount <= 0 or amount > MAX_MONEY or amount.as_tuple().exponent < -2:
-                raise ValueError("invoice item amounts must be positive, finite, and have at most two decimal places")
+            if not amount.is_finite() or amount == 0 or abs(amount) > MAX_MONEY or amount.as_tuple().exponent < -2:
+                raise ValueError("invoice item amounts must be non-zero, finite, and have at most two decimal places")
+            try:
+                quantity = Decimal(str(item.get("quantity", 1)))
+                unit_price = Decimal(str(item.get("unit_price", amount / quantity)))
+            except Exception as exc:
+                raise ValueError("invoice item quantity and unit price must be numeric") from exc
+            if not quantity.is_finite() or quantity <= 0 or quantity > MAX_MONEY or quantity.as_tuple().exponent < -3:
+                raise ValueError("invoice item quantity must be positive with at most three decimal places")
+            if not unit_price.is_finite() or abs(unit_price) > MAX_MONEY or unit_price.as_tuple().exponent < -2:
+                raise ValueError("invoice item unit price must be finite and have at most two decimal places")
+            if (quantity * unit_price).quantize(Decimal("0.01")) != amount:
+                raise ValueError("invoice item total must equal quantity multiplied by unit price")
+            item["amount"] = amount
+            item["quantity"] = quantity
+            item["unit_price"] = unit_price
         return value
+
 
     @field_validator("description")
     @classmethod
@@ -103,58 +130,24 @@ class InvoiceRequest(RequestModel):
         return value
 
 
-class LedgerAdjustment(BaseModel):
-    id: str = Field(min_length=1, max_length=64)
-    type: str = Field(pattern="^(ADDITIONAL_CHARGE|DISCOUNT)$")
+class ReceiptRequest(RequestModel):
+    """Receipt content asserted by the caller; Scribed does not verify payment."""
+
+    client_name: ShortText
+    client_email: str | None = Field(default=None, max_length=254)
+    project_name: ShortText
+    description: LongText
     amount: Decimal = Field(gt=0, le=MAX_MONEY)
-    reason: str = Field(min_length=1)
-    actor: str = Field(min_length=1)
+    currency: str = Field(default="KES", min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
+    received_date: date = Field(default_factory=date.today)
+    payment_method: Annotated[str, StringConstraints(max_length=120)] | None = None
+    payment_reference: Annotated[str, StringConstraints(max_length=255)] | None = None
 
-    @field_validator("amount")
+    @field_validator("description")
     @classmethod
-    def finite_adjustment(cls, value: Decimal) -> Decimal:
-        if not value.is_finite() or value > MAX_MONEY or value.as_tuple().exponent < -2:
-            raise ValueError("adjustment amount must be finite and have at most two decimal places")
+    def reject_placeholder_description(cls, value: str) -> str:
+        if value.strip().lower() in {"sdfsdfsdfs", "test", "placeholder", "todo"}:
+            raise ValueError("description must contain a real receipt description")
         return value
 
 
-class LedgerSyncRequest(BaseModel):
-    project_id: str = Field(min_length=1)
-    # Older Gatekeeper outbox events predate versioned ledger snapshots.
-    ledger_version: str = Field(default="legacy-sync", pattern=r"^(?:legacy-sync|v?\d+(?:\.\d+)*)$", max_length=128)
-    base_amount: Decimal = Field(ge=0, le=MAX_MONEY)
-    additional_charges: Decimal = Field(default=Decimal("0"), ge=0, le=MAX_MONEY)
-    discounts: Decimal = Field(default=Decimal("0"), ge=0, le=MAX_MONEY)
-    # Legacy Gatekeeper payloads supplied one net adjustment total.
-    total_adjustments: Decimal | None = Field(default=None)
-    successful_payments: Decimal = Field(default=Decimal("0"), ge=0, le=MAX_MONEY)
-    # Legacy Gatekeeper payloads supplied this field name.
-    total_payments: Decimal | None = Field(default=None, ge=0)
-    outstanding_balance: Decimal = Field(ge=0, le=MAX_MONEY)
-    currency: str = Field(min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
-    adjustments: list[LedgerAdjustment] = Field(default_factory=list)
-
-    @field_validator("base_amount", "additional_charges", "discounts", "total_adjustments",
-                     "successful_payments", "total_payments", "outstanding_balance")
-    @classmethod
-    def finite_ledger_money(cls, value: Decimal | None) -> Decimal | None:
-        if value is not None and (not value.is_finite() or value.copy_abs() > MAX_MONEY or value.as_tuple().exponent < -2):
-            raise ValueError("ledger amounts must be finite and have at most two decimal places")
-        return value
-
-    @property
-    def net_adjustments(self) -> Decimal:
-        if self.total_adjustments is not None:
-            return self.total_adjustments
-        return self.additional_charges - self.discounts
-
-    @property
-    def net_payments(self) -> Decimal:
-        if self.total_payments is not None:
-            return self.total_payments
-        return self.successful_payments
-
-
-class ServiceLedgerSyncRequest(BaseModel):
-    service_id: str = Field(min_length=1, max_length=64)
-    adjustments: list[LedgerAdjustment] = Field(default_factory=list)

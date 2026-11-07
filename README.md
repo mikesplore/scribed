@@ -1,15 +1,6 @@
 # Scribed
 
-Scribed is the document and client-operations service for the **mikesplore** freelance platform. It generates professional contract and invoice PDFs, stores records, sends them through Resend, and tracks their lifecycle.
-
-Scribed works alongside [`mikesplore/gatekeeperd`](https://github.com/mikesplore/gatekeeperd), which owns hosted projects, payment gating, access control, and Paystack events.
-
-## Responsibilities
-
-- Scribed: contracts, invoices, PDFs, numbering, Resend delivery, verification, and Telegram workflows.
-- Gatekeeperd: hosted projects, blocking/unblocking, Paystack payments, Nginx integration, and project audit history.
-
-The Telegram bot is a management interface that calls both APIs; it does not duplicate their business logic.
+Scribed is a standalone HTTP service for validating, rendering, storing, and retrieving branded contract and invoice PDFs for freelance work under the **mikesplore** identity.
 
 ## Local setup
 
@@ -20,78 +11,37 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Set `SCRIBED_API_TOKEN`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_OWNER_ID` in `.env`. Scribed loads `.env` automatically; never commit it.
+Set `SCRIBED_API_TOKEN` in `.env`. Do not commit `.env`.
 
-For local development, start both processes together with:
+Start the API and apply migrations with `./dev-start.sh`. The local API uses port `8001` by default; set `PORT` to change it. API documentation is available at <http://localhost:8001/docs> in development.
 
-```bash
-./dev-start.sh
-```
+To run Uvicorn directly from the repository root, use `.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload`. The ASGI module is `app.main`, not `main`.
 
-The API uses port `8001` by default; set `PORT` to change it. The Telegram bot
-webhook is served by the same FastAPI process and port. Route the configured
-webhook URL and path to the API through the reverse proxy.
+The service accepts complete contract, invoice, and receipt document inputs, renders PDFs, stores issued artifacts, and serves them through its HTTP API. A receipt request is the calling client's assertion of the receipt content; Scribed does not verify payments, calculate balances, or decide whether a receipt is eligible to be issued.
 
-## First local test
-
-```bash
-cp .env.example .env
-./dev-start.sh
-```
-
-Scribed loads variables from `.env` automatically. Do not commit `.env`.
-
-The API documentation is at <http://localhost:8001/docs> locally, or at <https://scribed.mikesplore.me/docs> in production. The default SQLite database and `storage/` directory are created automatically.
-
-In Docker, database migrations run automatically before the API and Telegram bot
-start (`alembic upgrade head`). Set `DATABASE_URL` in the container environment
-to the PostgreSQL connection string. The `scribed` Compose service exposes one
-port (`9005`) and starts both processes. For local development, update the
-schema with `alembic upgrade head`.
-
-Polling is disabled. Configure `TELEGRAM_WEBHOOK_URL` and
-`TELEGRAM_WEBHOOK_SECRET` before starting the bot.
-
-## Telegram commands
-
-```bash
- /start
-/newcontract
-/newinvoice
-/contracts
-/invoices
-/status NUMBER
-/send NUMBER
-/accepted NUMBER
-/paid NUMBER
-/cancel
-```
-
-Use `/help` to see the complete capability list. Telegram also shows these commands in its native command menu after the bot starts.
-
-Document creation is conversational and requires confirmation. `/start` also provides buttons for creation, listing, and deletion. Only `TELEGRAM_OWNER_ID` can use commands.
+In Docker, database migrations run before the API starts. Set `DATABASE_URL` to the PostgreSQL connection string. The Compose service exposes port `9005`.
 
 ## API and security
 
-Management routes require `Authorization: Bearer <SCRIBED_API_TOKEN>`. `/health` and `/verify/{number}` are public. The API rate limit defaults to 60 requests per minute per client IP and is configurable with `RATE_LIMIT_PER_MINUTE`. CORS is disabled by default; configure trusted origins with the comma-separated `CORS_ALLOWED_ORIGINS` variable.
+Management routes require `Authorization: Bearer <SCRIBED_API_TOKEN>`. `/health` and `/verify/{number}` are public. Rate limiting defaults to 60 requests per minute per client IP and is configurable with `RATE_LIMIT_PER_MINUTE`. CORS is disabled by default; set `CORS_ALLOWED_ORIGINS` to trusted origins if needed.
 
-Contracts can be archived with `DELETE /contracts/{id}` and permanently deleted only afterward with `DELETE /contracts/{id}/permanent`. Audit history is available at `GET /audit/{number}`.
+The API supports direct PDF previews at `POST /generate/contract`, `POST /generate/invoice`, and `POST /generate/receipt`; persisted creation at `POST /contracts`, `POST /invoices`, and `POST /receipts`; and retrieval at `GET /contracts/{id}`, `GET /invoices/{id}`, and `GET /receipts/{id}`. `Idempotency-Key` makes persisted document creation retries safe. Receipts require this header; they are issued and stored as immutable PDFs as part of `POST /receipts`. The PDF response includes `X-Document-Id`, `X-Document-Number`, and `Location` headers for later retrieval. A request accepted before a rendering interruption remains pending and can be safely retried with the same key. The retry returns the stored PDF when issuance already completed.
 
-Resend delivery requires `RESEND_API_KEY` and `RESEND_FROM_EMAIL`.
+## API client registration
 
-## Gatekeeperd integration
+The `SCRIBED_API_TOKEN` is the administrator credential. Use it to register each calling application at `POST /api-clients` with its name, address, contact email, and phone. Scribed returns a random API token once; store it securely. Scribed stores only its hash. Use `GET /api-clients` to view registered profiles, `PUT /api-clients/{id}` to update one, and `DELETE /api-clients/{id}` to revoke its token. A scoped client can read and update only its own profile using `GET /api-clients/me` and `PATCH /api-clients/me`; this lets integrations maintain their document attribution without needing the administrator credential.
 
-Contracts can store a Gatekeeperd project UUID in `gatekeeper_project_id`. Gatekeeperd can retrieve the linked contract at `GET /contracts/by-project/{id}` and notify Scribed of a suspension at `POST /integrations/gatekeeper/suspensions` using `X-Gatekeeper-Secret`.
+Send the registered client's token as `Authorization: Bearer <client-token>` with document requests. The form contains only the document's fields. Scribed identifies the requester from the token and adds the registered profile under “Prepared on behalf of” in generated documents. The profile used is snapshotted with persisted documents. Client tokens can generate documents and retrieve only their own persisted documents; the administrator token manages registrations and has full API access.
 
-Gatekeeperd first calls `POST /integrations/gatekeeper/invoices/ensure` to create or link an invoice for the project. This makes a new, otherwise empty Scribed database usable without manually creating the invoice first. Existing invoices are linked by Gatekeeper project ID or, when unlinked, by project name; an invoice already linked to a different project is rejected. Then Gatekeeperd synchronizes the project ledger and sends verified payments to `POST /integrations/gatekeeper/payments`; Scribed records each provider reference idempotently and generates a receipt. `GET /integrations/gatekeeper/invoices/{project_id}` returns the invoice and recorded payments. Gatekeeperd can also replay the ledger and successful payments to recover missed integration deliveries.
+For example, register `Example Studio` with its business contact details, then submit an invoice form with `client_name`, `project_name`, `description`, and `amount` using that client's token. The form does not include `Example Studio`'s identity; Scribed adds it from the credential's registered profile.
 
-Receipts are persisted and can be retrieved at `GET /payments/{payment_id}/receipt`; invoice PDFs are available at `GET /invoices/{invoice_id}`. These routes require the API bearer token. Integration routes also require the matching `X-Gatekeeper-Secret`.
+A receipt form uses `client_name`, `project_name`, `description`, `amount`, `currency`, `received_date`, and optional `payment_method` and `payment_reference`. Its number is assigned by Scribed. The registered API client is added as the “Prepared on behalf of” identity. The client is responsible for submitting only receipt details that it is authorized to issue; Scribed does not confirm that money was received.
 
-Configure `SCRIBED_CALLBACK_URL` and `SCRIBED_INTEGRATION_SECRET` in Gatekeeperd, with the matching secret in Scribed.
+PDF rendering runs in an isolated worker with configurable `PDF_RENDER_TIMEOUT_SECONDS` and `PDF_RENDER_MEMORY_MB` limits. Contracts can be archived with `DELETE /contracts/{id}` and permanently deleted afterward with `DELETE /contracts/{id}/permanent`.
 
 ## Testing
 
 ```bash
 .venv/bin/pytest -q
-.venv/bin/python -m compileall -q app bot.py
+.venv/bin/python -m compileall -q app
 ```

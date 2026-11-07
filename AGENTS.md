@@ -14,7 +14,7 @@ The development roadmap is defined in [scribed-development-plan.md](scribed-deve
 - Use `rg` or `rg --files` for searching files and text.
 - Use `apply_patch` for source and configuration edits.
 - Preserve unrelated user changes in the working tree.
-- Do not add authentication, persistence, email, Telegram, or Gatekeeper integration ahead of the phase that specifies it.
+- Do not add authentication, persistence, or email ahead of the phase that specifies it.
 
 ## Architecture
 
@@ -23,7 +23,7 @@ The development roadmap is defined in [scribed-development-plan.md](scribed-deve
 - PDF rendering: WeasyPrint through `app/render.py`.
 - Request and response validation: Pydantic models in `app/schemas.py`.
 - Database and filesystem storage are Phase 2 concerns.
-- Telegram is a management client, not a replacement for the HTTP API.
+- Keep Scribed independent of payment processing and external business systems.
 
 ## Phase discipline
 

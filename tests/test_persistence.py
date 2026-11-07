@@ -1,5 +1,4 @@
 from pathlib import Path
-from decimal import Decimal
 from app import db
 from app.main import (client_history, create_contract, create_invoice, duplicate_invoice,
                       get_contract, get_invoice, send_contract, send_invoice, verify_document)
@@ -37,7 +36,6 @@ def test_duplicate_invoice_and_client_history(tmp_path, monkeypatch):
     assert len(history["invoices"]) == len(before["invoices"]) + 2
     assert documents[0].pdf_path is None
     assert documents[1].pdf_path is None
-    assert Decimal(history["totals"]["billed"]) - Decimal(before["totals"]["billed"]) == Decimal("200.00")
 
 
 def test_draft_invoice_creation_does_not_store_pdf(tmp_path, monkeypatch):

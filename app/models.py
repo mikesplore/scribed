@@ -1,9 +1,21 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Integer, Numeric, String, Text, CheckConstraint
+from sqlalchemy import DateTime, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
+
+
+class APIClient(Base):
+    __tablename__ = "api_clients"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    address: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    contact_email: Mapped[str | None] = mapped_column(String(254), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    is_active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class Contract(Base):
@@ -12,7 +24,7 @@ class Contract(Base):
     contract_number: Mapped[str] = mapped_column(String(40), unique=True, index=True)
     client_name: Mapped[str] = mapped_column(String(255))
     project_name: Mapped[str] = mapped_column(String(255))
-    gatekeeper_project_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    api_client_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     terms_json: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(20), default="draft")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -36,54 +48,37 @@ class Invoice(Base):
     invoice_number: Mapped[str] = mapped_column(String(40), unique=True, index=True)
     client_name: Mapped[str] = mapped_column(String(255))
     project_name: Mapped[str] = mapped_column(String(255))
+    api_client_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     client_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    gatekeeper_project_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
-    gatekeeper_service_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     terms_json: Mapped[str] = mapped_column(Text, default="{}")
     amount: Mapped[float] = mapped_column(Numeric(14, 2))
-    base_amount: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
-    total_adjustments: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
-    total_payments: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
-    outstanding_balance: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
     currency: Mapped[str] = mapped_column(String(3))
     status: Mapped[str] = mapped_column(String(20), default="draft")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     pdf_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     pdf_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    receipt_path: Mapped[str | None] = mapped_column(Text, nullable=True)
-    receipt_number: Mapped[str | None] = mapped_column(String(50), nullable=True, unique=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True)
     request_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
-class InvoiceAdjustment(Base):
-    __tablename__ = "invoice_adjustments"
+class Receipt(Base):
+    __tablename__ = "receipts"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    invoice_id: Mapped[int] = mapped_column(Integer, index=True)
-    gatekeeper_adjustment_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    type: Mapped[str] = mapped_column(String(20))
-    amount: Mapped[float] = mapped_column(Numeric(14, 2))
-    reason: Mapped[str] = mapped_column(Text)
-    actor: Mapped[str] = mapped_column(String(255))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
-
-    __table_args__ = (CheckConstraint("type IN ('ADDITIONAL_CHARGE', 'DISCOUNT')"), CheckConstraint("amount > 0"))
-
-
-class Payment(Base):
-    __tablename__ = "payments"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    invoice_id: Mapped[int] = mapped_column(Integer, index=True)
-    provider: Mapped[str] = mapped_column(String(30))
-    provider_reference: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    receipt_number: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    client_name: Mapped[str] = mapped_column(String(255))
+    project_name: Mapped[str] = mapped_column(String(255))
+    api_client_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    terms_json: Mapped[str] = mapped_column(Text)
     amount: Mapped[float] = mapped_column(Numeric(14, 2))
     currency: Mapped[str] = mapped_column(String(3))
-    paid_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
-    receipt_number: Mapped[str] = mapped_column(String(60), unique=True)
-    receipt_path: Mapped[str] = mapped_column(Text)
-    idempotency_key: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    pdf_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pdf_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True)
+    request_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class AuditLog(Base):

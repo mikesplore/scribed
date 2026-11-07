@@ -1,6 +1,6 @@
 # scribed — Development Plan
 
-Contract and invoice PDF generation service for freelance client work, branded under "mikesplore". Standalone service, separate from `gatekeeperd`, integrated with it in later phases.
+Contract, invoice, and receipt PDF generation service for freelance client work, branded under "mikesplore". Standalone service with no external business-system integration. Receipt inputs are caller assertions; payment validation and receipt eligibility remain outside Scribed.
 
 ## Stack
 
@@ -13,7 +13,7 @@ Contract and invoice PDF generation service for freelance client work, branded u
 
 No registered business entity. No e-signature integration. Acceptance is via email reply ("I accept"), tracked manually in the DB.
 
-No web UI. Management interface is a Telegram bot (`python-telegram-bot`), calling the FastAPI service as a client — not replacing it. Gatekeeper and any future consumer should still be able to call the API directly without going through Telegram.
+No web UI or chat bot. Authorized consumers use the FastAPI document API directly.
 
 ## Repo structure
 
@@ -24,6 +24,7 @@ scribed/
     templates/
       contract.html
       invoice.html
+      receipt.html
     render.py          # WeasyPrint render logic
     models.py           # DB models
     schemas.py           # Pydantic request/response models
@@ -53,6 +54,7 @@ scribed/
 - Endpoints:
   - `POST /generate/contract` — body: client/project/terms data → returns PDF (streamed or as bytes response)
   - `POST /generate/invoice` — body: client/project/amount data → returns PDF
+  - `POST /generate/receipt` — body: receipt details supplied by the caller → returns preview PDF
 - No auth needed yet (single-user tool). No DB yet.
 
 **Acceptance criteria**: hitting either endpoint with valid JSON returns a correctly formatted, readable PDF. Visually check spacing, fonts, page breaks.
@@ -65,24 +67,18 @@ scribed/
 
 - Add PostgreSQL. Tables:
   - `contracts`: id, contract_number (e.g. `MK-CON-0001`), client_name, project_name, terms_json (snapshot of data used to render), status (`draft`/`sent`/`accepted`), created_at, pdf_path
-  - `invoices`: id, invoice_number (e.g. `MK-INV-0001`), client_name, amount, currency, status (`draft`/`sent`/`paid`), created_at, pdf_path
+  - `invoices`: id, invoice_number (e.g. `MK-INV-0001`), client_name, amount, currency, status (`draft`/`sent`), created_at, pdf_path
+  - `receipts`: id, receipt_number (e.g. `MK-REC-0001`), validated receipt input snapshot, status, created_at, pdf_path
 - Numbering: sequential per document type, generated at creation time, not reused.
 - On generate, persist the structured terms snapshot in DB and return a freshly rendered PDF without storing a draft PDF.
 - Render draft PDFs on demand from the saved snapshot. When a document is sent or otherwise issued, store that exact PDF and its hash in local storage or R2 so later downloads and verification refer to the issued file.
 - New endpoints:
   - `GET /contracts/{id}` — fetch metadata + PDF
   - `GET /invoices/{id}` — same
+  - `POST /receipts` — persist and issue an immutable receipt from caller-supplied content; retries use `Idempotency-Key`
+  - `GET /receipts/{id}` — retrieve the issued receipt PDF
 
 **Acceptance criteria**: generating a document creates a DB row with a unique sequential number and a retrievable PDF; drafts have no stored PDF, and the first issued PDF is stored as an immutable artifact.
-
-### Telegram bot (basic)
-
-- Standalone service using `python-telegram-bot`, calling the scribed API as a client.
-- Gate by Telegram user ID — only your own ID is allowed to issue commands.
-- `/newcontract` and `/newinvoice` — collect client/project/amount data via a short conversation or a single structured message, call `POST /generate/{type}`, return the PDF in-chat.
-- `/status {number}` — fetch and report document status.
-
-**Acceptance criteria**: can generate and receive a contract or invoice PDF entirely from Telegram, with no other user able to trigger it.
 
 ---
 
@@ -92,7 +88,7 @@ scribed/
 
 - Add email sending: on `POST /contracts/{id}/send`, email the PDF to the client from a consistent sender address, mark status `sent`. Wire this to a bot command: `/send {number}`.
 - Add `POST /contracts/{id}/mark-accepted` — you call this once the client replies "I accept", sets status `accepted` + timestamp. Bot command: `/accepted {number}`.
-- Same pattern for invoices (`sent` → `paid`, marked via `/paid {number}` or a future Gatekeeper/Paystack webhook hook).
+- Same pattern for invoice delivery status; payment status is outside this service.
 
 **Acceptance criteria**: can send a real contract to a test email address and manually flip its status after replying.
 
@@ -110,25 +106,13 @@ scribed/
 
 ---
 
-## Phase 5 — Gatekeeper integration
-
-**Goal**: link contract terms to enforcement.
-
-- Add a `gatekeeper_project_id` foreign key (or loose reference string) on `contracts` linking it to the relevant `gatekeeperd` client/project.
-- When `gatekeeperd` suspends a project for non-payment, it should be able to look up the linked contract and log the suspension against it (e.g. "suspended per contract MK-CON-0001, late-payment clause") — this is a data link and a log line, not new business logic in scribed itself.
-- Optional: expose `GET /contracts/by-project/{gatekeeper_project_id}` so gatekeeperd can pull the relevant contract/clause text when it suspends.
-- Optional: auto-populate invoice amounts from Gatekeeper's Paystack payment records instead of manual entry.
-
-**Acceptance criteria**: a Gatekeeper suspension event can resolve back to the specific contract and clause it's enforcing.
-
 ---
 
-## Phase 6 — Polish
+## Phase 5 — Polish
 
 - Drop in the mikesplore logo once available; update templates.
 - Set PDF metadata (author: mikesplore, title: contract/invoice number).
-- Polish the Telegram bot flow (better prompts, inline confirmation before send, error handling on bad input).
-- Standardize the late-fee/suspension timeline (e.g. 7 days = warning, 14 days = suspension) as a constant/config value referenced in both the contract template and Gatekeeper logic, not re-decided per contract.
+- Keep payment and suspension enforcement rules outside this service.
 
 ---
 
